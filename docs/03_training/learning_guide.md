@@ -308,8 +308,9 @@ Kết quả ghi vào `int8_report.json`, gồm `val_map50_fp32`, `val_map50_int8
 - Hàm `validate()` kiểm tra định dạng trước khi ghi file.
 
 **Việc cần làm.**
-- Hỏi nhóm TextCNN file của họ có những cột nào. Cần `task_type,sample_id,prediction`.
-- Sau đó ghép file, kiểm tra script in ra `HỢP LỆ`, rồi nộp.
+- ~~Hỏi nhóm TextCNN file của họ có những cột nào.~~ Đã xong (2026-11-11). File INTENT nằm ở `MyDrive/EdgeAI/intent_submission.csv`, do `scripts/colab_intent.py` tạo, đúng 3 cột `task_type,sample_id,prediction`.
+- Runner TextCNN đã ghép sẵn `submission_with_intent.csv` cạnh mỗi `experiments/<detection>/submission.csv`. Nộp file của thí nghiệm detection có mAP50 INT8 cao nhất. Xem [textcnn_intent.md](textcnn_intent.md).
+- `colab_run.py` tự dùng `intent_submission.csv` cho các thí nghiệm detection mới.
 
 ---
 

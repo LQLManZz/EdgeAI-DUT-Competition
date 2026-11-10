@@ -41,7 +41,7 @@ Hệ quả thực tế:
 
 Điểm vòng loại được tính như sau:
 `70 × mAP50 + 30 × Accuracy(TextCNN)`.
-Phần TextCNN do nhóm khác làm. Phần của chúng ta là 70 điểm mAP50.
+Phần của chúng ta là 70 điểm mAP50. Phần TextCNN ban đầu do nhóm khác làm. Ngày 2026-11-11, code của họ được viết lại cho đạt luật (TFLite INT8) và train trên Colab. Model `textcnn_dual` đạt 100% CV và 92,7% stress test (INT8), đã có file dự đoán và đã ghép vào submission. Chi tiết: [textcnn_intent.md](textcnn_intent.md).
 
 ---
 

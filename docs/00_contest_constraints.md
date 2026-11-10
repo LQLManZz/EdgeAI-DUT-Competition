@@ -51,6 +51,8 @@ Khi hai nguồn mâu thuẫn, ghi cả hai và đưa vào mục "Câu hỏi cho 
 | Detection | 1 model, 1 lần suy luận/ảnh, không ensemble, không TTA |
 | Input detection | Mỗi chiều ≤ 320 × 240; khuyến nghị 96×96, 128×128, 160×160 |
 | Model detection | **TensorFlow Lite INT8**, ≤ **200.000 tham số**, file ≤ **1,5 MB** |
+| Model intent | **TextCNN, TFLite INT8**, ≤ **200.000 tham số**, file ≤ **1,5 MB**, chạy bằng TFLite Micro trên ESP32-S3 |
+| Xử lý câu hỏi | Được dùng từ điển + logic để chuẩn hóa câu, lấy lớp vật, định dạng đáp án; **không được thay hoàn toàn TextCNN bằng luật từ khóa** |
 | Toán tử | Chỉ op mà **bản TFLite Micro trong starter kit** hỗ trợ |
 | Phản hồi | ≤ **10 s** mỗi lượt hỏi, tính từ khi nhận yêu cầu tới khi trả kết quả |
 | Suy luận | Toàn bộ trên ESP32-S3, không offload |

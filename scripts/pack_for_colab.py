@@ -18,9 +18,9 @@ OUT = ROOT / "colab"
 CODE = ["src", "configs", "tests", "scripts/sanity_overfit.py", "scripts/colab_run.py"]
 
 
-def add(z, path):
+def add(z, path, skip=None):
     for p in ([path] if path.is_file() else sorted(path.rglob("*"))):
-        if p.is_file() and "__pycache__" not in p.parts:
+        if p.is_file() and "__pycache__" not in p.parts and not (skip and skip in p.name + "/".join(p.parts)):
             z.write(p, p.relative_to(ROOT).as_posix())
 
 
@@ -31,7 +31,7 @@ INTENT = ["src/textcnn", "tests/test_textcnn.py", "scripts/colab_intent.py",
 OUT.mkdir(exist_ok=True)
 with zipfile.ZipFile(OUT / "edgeai_code.zip", "w", zipfile.ZIP_DEFLATED) as z:
     for c in CODE:
-        add(z, ROOT / c)
+        add(z, ROOT / c, skip="textcnn")      # TextCNN nằm trong textcnn_code.zip riêng
 print("->", OUT / "edgeai_code.zip", f"{(OUT / 'edgeai_code.zip').stat().st_size / 1024:.0f} KB")
 
 with zipfile.ZipFile(OUT / "textcnn_code.zip", "w", zipfile.ZIP_DEFLATED) as z:

@@ -124,6 +124,13 @@ Lệnh `debug_int8.py` chạy với 200 ảnh train để chọn scale và 32 �
 - **Ở cả 3 lần, model tốt nhất là epoch cuối cùng.** Vậy khi train lại trên train+val (không còn val để chọn checkpoint), chỉ cần lấy epoch cuối.
 - Giai đoạn đầu vẫn dao động mạnh: #8 kẹt ở 0,22–0,33 trong khoảng 30 epoch, #9 kẹt ở 0,18–0,30 trong khoảng 20 epoch.
 
+## Phần intent (TextCNN) – 30% điểm
+
+Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắt [TĐ] ngày 2026-11-11:
+- `textcnn_dual`: 62.189 tham số, 81 KB INT8, CV INT8 1,0000, stress INT8 0,9274. **Đã chọn để nộp.**
+- Dự đoán nằm ở `MyDrive/EdgeAI/intent_submission.csv`. Mỗi thí nghiệm ở bảng trên có thêm `submission_with_intent.csv` (8000 dòng) trong thư mục Drive của nó.
+- Cột "Kaggle" ở bảng trên vẫn là "chưa nộp". Khi nộp, dùng `submission_with_intent.csv`, rồi ghi điểm vào cột đó.
+
 ## Ghi chú môi trường Colab (đo 2026-11-10)
 
 - Runtime: T4, TF 2.21, Keras 3.13, 8 nhân CPU.
