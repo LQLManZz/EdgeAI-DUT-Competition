@@ -1,0 +1,12 @@
+set(BENCH_MODELS
+    models/edgedet_c_center_144x192.tflite
+    models/edgedet_c_center_192x256.tflite
+    models/edgedet_c_center_240x320.tflite
+    models/edgedet_c_center_96x128.tflite
+    models/edgedet_c_yolo_144x192.tflite
+    models/edgedet_p_center_144x192.tflite
+    models/edgedet_p_center_192x256.tflite
+    models/edgedet_p_center_240x320.tflite
+    models/edgedet_p_center_96x128.tflite
+    models/edgedet_p_yolo_144x192.tflite
+)

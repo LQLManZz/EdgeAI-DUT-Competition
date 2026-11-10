@@ -1,0 +1,42 @@
+# VSCode
+.vscode/
+
+# Obsidian
+.obsidian/
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Data & artifacts (lớn, không commit)
+data/raw/*
+data/processed/*
+data/external/*
+models/checkpoints/*
+models/tflite/*
+experiments/*/*
+# Giữ số liệu [TĐ] của GĐ1 (nhỏ, là bằng chứng cho docs)
+!experiments/phase1_analysis/*.csv
+!experiments/phase1_analysis/*.txt
+!experiments/phase1_analysis/json/
+!experiments/phase1_analysis/framework/framework_probe.json
+!experiments/phase2_arch/*.csv
+!experiments/phase2_arch/*.txt
+!experiments/phase2_arch/json/
+!**/.gitkeep
+!data/README.md
+
+# ESP-IDF
+firmware/**/build/
+firmware/**/managed_components/
+firmware/**/sdkconfig.old
+firmware/**/sdkconfig
+firmware/**/*.log
+# .tflite probe sinh lại bằng scripts/analysis/probe_model.py + gen_bench_models.py
+firmware/bench_probe/main/models/
+
+# Gói upload lên Google Drive cho Colab
+colab/

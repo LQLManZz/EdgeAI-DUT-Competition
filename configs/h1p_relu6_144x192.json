@@ -1,0 +1,1 @@
+{"backbone": "mnv3s", "pretrained": true, "mnv3_relu6": true, "input_hw": [144, 192]}

@@ -1,0 +1,5 @@
+{
+  "_note": "Thứ tự thí nghiệm TextCNN mà scripts/colab_intent.py chạy. Mỗi tên ứng với configs/<tên>.json. 'use': tên model intent muốn nộp (null = tự chọn theo stress INT8).",
+  "queue": ["textcnn_word", "textcnn_char", "textcnn_dual"],
+  "use": null
+}
