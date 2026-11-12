@@ -47,9 +47,10 @@ câu hỏi -> norm() -> token -> id (độ dài cố định, đệm <pad>=0, t�
 - **Nhánh char** đọc từng ký tự, nên vẫn hiểu được từ chưa gặp lúc train. Ví dụ `kiem` gần với `kiem tra`.
 - **Nhánh word** nắm cụm từ chắc hơn.
 - Train như sau:
-  - 25 epoch, batch 64, AdamW với lr 2e-3, warmup 30% rồi giảm theo cos (tương đương OneCycle của bản gốc).
+  - 25–30 epoch, batch 64, AdamW với lr 2e-3, warmup 30% rồi giảm theo cos (tương đương OneCycle của bản gốc).
   - label smoothing 0,05.
-  - Token dropout 10%: thay ngẫu nhiên token bằng `<unk>`.
+  - Token dropout 10–15%: thay ngẫu nhiên token bằng `<unk>`.
+  - **Word-branch dropout (`word_branch_dropout=0.25` ở `textcnn_dual_v2`):** với xác suất 25% trên từng câu, che toàn bộ `word_ids` thành `<unk>` để buộc nhánh `char` tự phân loại độc lập, khắc phục hiện tượng nhánh `word` lấn át làm giảm điểm ở các cụm từ mới (`tat ca`, `dung de`).
   - Thêm khoảng 50% câu OOS tổng hợp: lấy câu COUNT/EXIST/LOCATION, đổi tên vật trong lớp thành vật ngoài lớp.
 
 ## 3. Cách đánh giá (tập test không có nhãn)
@@ -141,7 +142,7 @@ ESP32 phải làm **y hệt** lúc train, nếu không model nhận đầu vào 
 | Nộp Kaggle `submission_with_intent.csv` của detection tốt nhất | **cao** | Hiện là #9 `h1p_pen_240x320_bw2` (mAP50 INT8 0,9257). Ước tính S ≈ 0,7 × 92,6 + 0,3 × ~100 ≈ 94,8 nếu accuracy intent khoảng 99–100% |
 | Chạy `model_int8.tflite` trên kit (esp-tflite-micro 1.4.2) | trung bình | 6 op đều là op cơ bản của TFLM nhưng **chưa chạy thử trên kit**; file được convert bằng TF 2.21 |
 | Viết tokenizer C cho firmware theo mục 6 | trước chung kết | Đối chiếu id với Python trên vài chục câu |
-| Tăng độ bền với cách hỏi mới | thấp cho Kaggle, có ích cho chung kết | Các cụm dual còn yếu: `tat ca` 0,69, `dung de` 0,63, `phia` 0,69, `vi tri` 0,79. Ý tưởng: tăng token dropout 0,1 → 0,2–0,3; thêm dropout riêng cho nhánh word để buộc model dùng nhánh char |
+| Tăng độ bền với cách hỏi mới (`textcnn_dual_v2`) | **đã triển khai code** | Các cụm dual còn yếu: `tat ca` 0,69, `dung de` 0,63, `phia` 0,69, `vi tri` 0,79. Đã thêm `word_branch_dropout: 0.25` + `word_dropout: 0.15` và tạo `configs/textcnn_dual_v2.json` trong `textcnn_queue.json` |
 | Hỏi BTC: test intent có cân bằng 5 lớp không | thấp | Nếu có, phân bố 800/lớp của dual là bằng chứng mạnh hơn |
 
 ## 8. File liên quan

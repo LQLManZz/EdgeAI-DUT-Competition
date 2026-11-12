@@ -1,0 +1,1 @@
+{"branches": {"word": {"E": 48, "nf": 80, "ks": [1, 2, 3]}, "char": {"E": 32, "nf": 112, "ks": [3, 4, 5]}}, "word_dropout": 0.15, "word_branch_dropout": 0.25, "epochs": 30, "bs": 64, "lr": 0.002}

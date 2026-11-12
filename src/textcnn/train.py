@@ -50,10 +50,17 @@ def fit(cfg, X, y, classes, seed=0, verbose=False):
     model = build(cfg, {k: len(v) for k, v in vocabs.items()}, len(classes))
 
     p, bs, epochs, lr = cfg.get("word_dropout", 0.1), cfg.get("bs", 64), cfg.get("epochs", 25), cfg.get("lr", 2e-3)
+    wb_drop = cfg.get("word_branch_dropout", 0.0)
 
     def token_dropout(x, yy):   # thay ngẫu nhiên p% token bằng <unk> -> model quen với từ lạ
-        return {n: tf.where((tf.random.uniform(tf.shape(v)) > p) | (v == T.PAD), v, tf.ones_like(v) * T.UNK)
-                for n, v in x.items()}, yy
+        out = {n: tf.where((tf.random.uniform(tf.shape(v)) > p) | (v == T.PAD), v, tf.ones_like(v) * T.UNK)
+               for n, v in x.items()}
+        if wb_drop > 0 and "word_ids" in out and len(out) > 1:
+            # Với xác suất wb_drop trên từng câu, che toàn bộ word_ids thành <unk> để ép nhánh char độc lập đoán đúng
+            v = out["word_ids"]
+            keep = tf.random.uniform((tf.shape(v)[0], 1)) > wb_drop
+            out["word_ids"] = tf.where(keep | (v == T.PAD), v, tf.ones_like(v) * T.UNK)
+        return out, yy
 
     ds = (tf.data.Dataset.from_tensor_slices((encode_all(cfg, vocabs, X), keras.utils.to_categorical(y, len(classes))))
           .shuffle(len(y), seed=seed).batch(bs).map(token_dropout).prefetch(2))
