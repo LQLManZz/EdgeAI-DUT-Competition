@@ -37,8 +37,7 @@ print("->", OUT / "edgeai_code.zip", f"{(OUT / 'edgeai_code.zip').stat().st_size
 with zipfile.ZipFile(OUT / "textcnn_code.zip", "w", zipfile.ZIP_DEFLATED) as z:
     for c in INTENT + [p.relative_to(ROOT).as_posix() for p in sorted((ROOT / "configs").glob("textcnn_*.json"))]:
         add(z, ROOT / c)
-(OUT / "textcnn_colab.ipynb").write_bytes((ROOT / "notebooks" / "textcnn_colab.ipynb").read_bytes())
-print("->", OUT / "textcnn_code.zip", f"{(OUT / 'textcnn_code.zip').stat().st_size / 1024:.0f} KB  (+ textcnn_colab.ipynb)")
+print("->", OUT / "textcnn_code.zip", f"{(OUT / 'textcnn_code.zip').stat().st_size / 1024:.0f} KB")
 
 if "--data" in sys.argv:
     with zipfile.ZipFile(OUT / "edgeai_data.zip", "w", zipfile.ZIP_STORED) as z:   # PNG đã nén sẵn, không nén thêm
