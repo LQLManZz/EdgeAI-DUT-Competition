@@ -55,6 +55,7 @@ def main(argv=None):
     ap.add_argument("--out", help="mặc định: model_int8.tflite cạnh file .keras")
     ap.add_argument("--val_frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n_rep", type=int, default=300, help="số ảnh train dùng để calibration INT8")
     ap.add_argument("--no_eval", action="store_true")
     a = ap.parse_args(argv)
 
@@ -62,10 +63,11 @@ def main(argv=None):
     hw = tuple(model.input_shape[1:3])
     train_items, val_items = split_train_val(load_items(a.data, "train"), a.val_frac, a.seed)
     rng = np.random.default_rng(0)
-    rep_items = [train_items[i] for i in rng.choice(len(train_items), 200, replace=False)]   # ảnh train, không dùng val
+    n_rep = min(a.n_rep, len(train_items))
+    rep_items = [train_items[i] for i in rng.choice(len(train_items), n_rep, replace=False)]   # ảnh train, không dùng val
 
     out = Path(a.out) if a.out else Path(a.model).with_name("model_int8.tflite")
-    out.write_bytes(convert(model, rep_items))
+    out.write_bytes(convert(model, rep_items, n_rep=n_rep))
 
     ops = op_names(out)
     rep = {"tflite": str(out), "input_hw": list(hw), "params_keras": int(model.count_params()),

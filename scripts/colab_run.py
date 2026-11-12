@@ -75,8 +75,8 @@ def run_experiment(name, drive, train_extra=()):
         print("train + export: đã xong trước đó (có int8_report.json) -> bỏ qua")
 
     sub, intent = out / "submission.csv", Path(drive) / "intent_submission.csv"
-    # làm lại submission nếu file intent của nhóm TextCNN mới hơn (submission cũ mang nhãn INTENT mẫu)
-    if not sub.exists() or (intent.exists() and intent.stat().st_mtime > sub.stat().st_mtime):
+    # làm lại submission nếu file intent của nhóm TextCNN mới hơn, hoặc chưa có int8_probe.txt (cập nhật decode mới)
+    if not sub.exists() or not (out / "int8_probe.txt").exists() or (intent.exists() and intent.stat().st_mtime > sub.stat().st_mtime):
         args = ["-m", "edgedet.eval.make_submission", "--tflite", str(out / "model_int8.tflite"),
                 "--data", str(DATA), "--out", str(sub)]
         if intent.exists():
@@ -93,7 +93,7 @@ def run_experiment(name, drive, train_extra=()):
 
     if not (out / "int8_probe.txt").exists():
         run("probe", ["-m", "edgedet.quant.int8_probe", "--model", str(out / "best.keras"), "--data", str(DATA)],
-            out / "probe.log", re.compile(r"^(A\.|B\.|-> )|^   \S").search)   # chỉ dòng kết quả, bỏ log TF
+            out / "probe.log", re.compile(r"^(A\.|B\.|C\.|-> )|^   \S").search)   # chỉ dòng kết quả, bỏ log TF
 
 
 def summary(drive):

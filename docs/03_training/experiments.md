@@ -141,7 +141,10 @@ Lệnh `debug_int8.py` chạy với 200 ảnh train để chọn scale và 32 �
   - Kết luận "train lâu làm INT8 mất nhiều hơn" (Nhận xét #8) **không còn đứng vững**: #8 mất 3,6, chỉ hơi cao hơn mức 3,35 mà #10 mất do may rủi.
   - FP32 của #8 (0,954) cao hơn các bản 80 epoch 0,8–1,4 điểm, lớn hơn nhiễu FP32 (khoảng 0,5), nên 120 epoch **có lẽ thật sự giúp FP32**.
 - **Đòn bẩy lớn nhất bây giờ là làm INT8 mất ít và ổn định.** Nếu #8 chỉ mất 1,1 như #11, nó sẽ đạt khoảng 0,94.
-- Bước tiếp: `int8_probe.py` chạy cho cả 5 bản 240×320 (không train lại), để xem phần mất nằm ở heatmap hay box, và có phụ thuộc ảnh calibration không.
+- **Đã phát hiện và sửa lỗi Decode trên INT8 (`decode_center`, Giai đoạn 1):**
+  - Trên FP32, `p >= nb` (max-pool 3×3) luôn chọn đúng 1 đỉnh vì số thực không bằng nhau. Nhưng trên INT8 (`hm` chỉ có 256 mức), 2 ô cạnh nhau ở đỉnh rất hay lượng tử hóa ra **cùng một số nguyên INT8**, khiến cả 2 đều thỏa `p >= nb` và sinh ra 2 box trùng nhau (trong đó ô lệch tâm đọc phải `box` chưa từng được giám sát lúc train!).
+  - Đã bổ sung vào `src/edgedet/utils/decode.py`: (1) `tie_break=True` chọn đúng 1 ô có trung bình 3×3 lớn nhất khi bằng điểm đỉnh; (2) `score_smooth=0.1` phá vỡ đồng hạng 1/256 khi xếp hạng AP toàn cục; (3) `nms_iou=0.65` lọc trùng cùng lớp cho vật lớn.
+- Bước tiếp: `int8_probe.py` chạy cho cả 5 bản 240×320 (không train lại), đo trực tiếp mức tăng mAP50 INT8 của `decode_center` mới (mục B) và tự động tạo lại `submission.csv` cho cả 5 bản.
 
 ## Phần intent (TextCNN) – 30% điểm
 

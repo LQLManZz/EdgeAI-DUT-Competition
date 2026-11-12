@@ -66,8 +66,9 @@ Cả ba dùng chung neck, chung độ phân giải, chung pipeline dữ liệu, 
 | `box` | 18×24×4 | `log(w/8)`, `log(h/8)`, `off_x`, `off_y` (w,h theo pixel input; offset trong ô) |
 
 **Decode** (`decode_center`, đã kiểm thử bằng ca thủ công):
-1. `p = sigmoid(hm)`; giữ điểm là cực đại 3×3 trong cùng lớp và `p ≥ ngưỡng`; lấy top-100.
-2. Tâm = `((x + off_x)·8, (y + off_y)·8)`; kích thước = `exp(·)·8`; nhân tỉ lệ về ảnh gốc 320×240.
+1. `p = sigmoid(hm)`; giữ điểm là cực đại 3×3 trong cùng lớp và `p ≥ ngưỡng`. Khi lượng tử hóa INT8 làm 2 ô cạnh nhau có cùng giá trị đỉnh (`p == nb`), phá vỡ đồng hạng (`tie_break`) bằng trung bình lân cận 3×3 để chỉ chọn đúng 1 ô tâm đồi Gauss.
+2. Trộn nhẹ điểm xếp hạng `(1 - α)·p + α·mean_3x3` (`α = 0,1`) để phá đồng hạng giữa các box có cùng mức INT8 (1/256) khi tính AP toàn cục; lọc trùng cùng lớp bằng NMS (`iou_thr = 0,65`); lấy top-100.
+3. Tâm = `((x + off_x)·8, (y + off_y)·8)`; kích thước = `exp(·)·8`; nhân tỉ lệ về ảnh gốc 320×240.
 3. Kaggle: ghi `{"class_id", "score", "bbox":[x_min, y_min, x_max, y_max]}`.
 4. Chung kết:
    - COUNT/EXIST/LIST = số peak có `p ≥ ngưỡng đếm`, theo từng lớp. Ngưỡng đếm tối ưu riêng trên tập val, khác ngưỡng mAP.

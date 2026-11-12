@@ -51,3 +51,20 @@ def test_encode_then_decode_recovers_box():
     for d in dets:
         ref = gt[0] if d["class_id"] == 1 else gt[1]
         assert iou(d["bbox"], ref) > 0.99, (d, ref)
+
+
+def test_decode_int8_plateau_tie_and_nms():
+    # Khi INT8 làm 2 ô cạnh nhau (5,5) và (5,6) có cùng giá trị đỉnh, tie_break chỉ giữ ô tâm (5,5)
+    input_hw, orig = (144, 192), (240, 320)
+    gt = np.array([[60.0, 60.0, 140.0, 140.0]])
+    s = np.array([input_hw[1] / orig[1], input_hw[0] / orig[0]] * 2)
+    hm, box_t = encode(gt * s, [3], input_hw)
+    logits = -10.0 + 12.0 * hm
+    iy, ix = np.unravel_index(np.argmax(hm[:, :, 3]), hm[:, :, 3].shape)
+    logits[iy, ix + 1, 3] = logits[iy, ix, 3]   # mô phỏng 2 ô cạnh nhau cùng mức lượng tử INT8
+
+    old_dets = decode_center(logits, box_t[..., :4], input_hw, orig, score_thr=0.5,
+                             tie_break=False, nms_iou=None, score_smooth=0.0)
+    new_dets = decode_center(logits, box_t[..., :4], input_hw, orig, score_thr=0.5)
+    assert len(old_dets) == 2                   # decode cũ sinh 2 box cho 1 vật (ô bên cạnh có box chưa train)
+    assert len(new_dets) == 1 and iou(new_dets[0]["bbox"], gt[0]) > 0.99

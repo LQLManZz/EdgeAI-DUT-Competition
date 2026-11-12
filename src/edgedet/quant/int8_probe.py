@@ -32,8 +32,8 @@ def raw_outputs(fn, items, hw):
     return np.stack(hm), np.stack(box)
 
 
-def map_of(hm, box, items, hw):
-    preds = {it["id"]: decode_center(hm[i], box[i], hw, ORIG_HW, 0.05, 100) for i, it in enumerate(items)}
+def map_of(hm, box, items, hw, **decode_kw):
+    preds = {it["id"]: decode_center(hm[i], box[i], hw, ORIG_HW, 0.05, 100, **decode_kw) for i, it in enumerate(items)}
     return map50(preds, gts_of(items))[0]
 
 
@@ -53,7 +53,7 @@ def main(argv=None):
     # A. ghép đầu ra FP32 / INT8
     h32, b32 = raw_outputs(keras_predict_fn(model), val, hw)
     h8, b8 = raw_outputs(TFLiteDetector(tfl), val, hw)
-    out("A. Ghép đầu ra (mAP50 val):")
+    out("A. Ghép đầu ra (mAP50 val, decode mới):")
     out(f"   hm32+box32 = {map_of(h32, b32, val, hw):.4f}   (FP32)")
     out(f"   hm32+box8  = {map_of(h32, b8, val, hw):.4f}   (chỉ box là INT8)")
     out(f"   hm8+box32  = {map_of(h8, b32, val, hw):.4f}   (chỉ heatmap là INT8)")
@@ -64,10 +64,21 @@ def main(argv=None):
     out(f"   tại các đỉnh FP32 > 0.3 ({peak.sum()} điểm): hm32 trung bình {h32[peak].mean():.3f}, hm8 {h8[peak].mean():.3f}")
     out(f"   |box8-box32| trung bình {np.abs(b8 - b32).mean():.3f}")
 
-    # B. calibration khác (file tạm, không đụng model_int8.tflite)
-    out("\nB. Convert lại với calibration khác (mAP50 INT8 val):")
-    out("   200 ảnh, seed 0 (file nộp hiện tại) = xem dòng hm8+box8 ở trên")
-    for name, seed, n in [("200 ảnh khác, seed 1", 1, 200), ("1000 ảnh, seed 2", 2, 1000)]:
+    # B. tác dụng của từng bước sửa decode trên INT8 (không cần train lại)
+    out("\nB. Tối ưu Decode trên INT8 (hm8+box8):")
+    m_old = map_of(h8, b8, val, hw, tie_break=False, nms_iou=None, score_smooth=0.0)
+    m_tie = map_of(h8, b8, val, hw, tie_break=True, nms_iou=None, score_smooth=0.0)
+    m_sm = map_of(h8, b8, val, hw, tie_break=True, nms_iou=None, score_smooth=0.1)
+    m_new = map_of(h8, b8, val, hw, tie_break=True, nms_iou=0.65, score_smooth=0.1)
+    out(f"   decode cũ (p >= nb, không NMS)          = {m_old:.4f}")
+    out(f"   + tie_break 3x3 (chọn đúng 1 đỉnh INT8) = {m_tie:.4f}   ({m_tie - m_old:+.4f})")
+    out(f"   + score_smooth 3x3 (phá đồng hạng AP)   = {m_sm:.4f}   ({m_sm - m_old:+.4f})")
+    out(f"   + NMS cùng lớp 0.65 (mặc định mới)      = {m_new:.4f}   ({m_new - m_old:+.4f})")
+
+    # C. calibration khác (file tạm, không đụng model_int8.tflite)
+    out("\nC. Convert lại với calibration khác (mAP50 INT8 val, decode mới):")
+    out(f"   200 ảnh, seed 0 (file nộp hiện tại) = {m_new:.4f}")
+    for name, seed, n in [("200 ảnh khác, seed 1", 1, 200), ("500 ảnh, seed 2", 2, 500)]:
         idx = np.random.default_rng(seed).choice(len(train_items), n, replace=False)
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "m.tflite"

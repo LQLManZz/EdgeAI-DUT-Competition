@@ -14,28 +14,61 @@ def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
 
-def decode_center(hm, box, input_hw, orig_hw=(240, 320), score_thr=0.05, topk=100):
-    """hm, box: float (đã dequantize), không có batch. Trả list dict {class_id, score, bbox[x1,y1,x2,y2]} trên ảnh gốc."""
+def decode_center(hm, box, input_hw, orig_hw=(240, 320), score_thr=0.05, topk=100,
+                  tie_break=True, nms_iou=0.65, score_smooth=0.1):
+    """hm, box: float (đã dequantize), không có batch. Trả list dict {class_id, score, bbox[x1,y1,x2,y2]} trên ảnh gốc.
+
+    Các cải tiến cho INT8 (mặc định bật):
+      tie_break    : khi lượng tử hóa INT8 làm 2 ô cạnh nhau có cùng giá trị đỉnh (p == nb), chỉ giữ đúng 1 ô có
+                     trung bình lân cận 3x3 lớn nhất (tâm đồi Gauss thật, nơi box được giám sát khi train).
+      score_smooth : trộn nhẹ (1 - α)*p + α*mean_3x3 để phá vỡ hiện tượng hàng nghìn box có cùng mức INT8 (1/256)
+                     khi xếp hạng tính AP toàn cục.
+      nms_iou      : lọc trùng theo từng lớp (None = tắt) khi vật lớn sinh ra 2 đỉnh cách nhau >= 2 ô lưới.
+    """
     p = _sigmoid(hm)
-    # NMS kiểu CenterNet: giữ điểm là cực đại trong lân cận 3x3 (cùng lớp)
     hf, wf, c = p.shape
-    pad = np.pad(p, ((1, 1), (1, 1), (0, 0)), constant_values=-1)
-    nb = np.max(np.stack([pad[dy:dy + hf, dx:dx + wf] for dy in range(3) for dx in range(3)]), axis=0)
-    peak = (p >= nb) & (p >= score_thr)
+    pad = np.pad(p, ((1, 1), (1, 1), (0, 0)), constant_values=-1.0)
+    win = np.stack([pad[dy:dy + hf, dx:dx + wf] for dy in range(3) for dx in range(3)])
+    nb = np.max(win, axis=0)
+    mean_3x3 = np.mean(np.maximum(win, 0.0), axis=0)
+    if tie_break:
+        idx_bias = (np.arange(hf)[:, None, None] * wf + np.arange(wf)[None, :, None]) * 1e-7
+        ts = mean_3x3 + idx_bias
+        pad_ts = np.pad(ts, ((1, 1), (1, 1), (0, 0)), constant_values=-1.0)
+        win_ts = np.stack([pad_ts[dy:dy + hf, dx:dx + wf] for dy in range(3) for dx in range(3)])
+        best_ts = np.max(np.where(win == nb, win_ts, -1.0), axis=0)
+        peak = (p >= nb) & (ts >= best_ts) & (p >= score_thr)
+    else:
+        peak = (p >= nb) & (p >= score_thr)
+
     ys, xs, cs = np.nonzero(peak)
-    scores = p[ys, xs, cs]
-    order = np.argsort(-scores)[:topk]
+    if not len(ys):
+        return []
+    raw_s = p[ys, xs, cs]
+    scores = (1.0 - score_smooth) * raw_s + score_smooth * mean_3x3[ys, xs, cs] if score_smooth else raw_s
     sy, sx = orig_hw[0] / input_hw[0], orig_hw[1] / input_hw[1]
-    out = []
-    for i in order:
-        y, x, k = ys[i], xs[i], cs[i]
-        lw, lh, ox, oy = box[y, x]
-        cx, cy = (x + ox) * STRIDE, (y + oy) * STRIDE
-        w, h = np.exp(lw) * STRIDE, np.exp(lh) * STRIDE
-        x1 = float(np.clip((cx - w / 2) * sx, 0, orig_hw[1])); x2 = float(np.clip((cx + w / 2) * sx, 0, orig_hw[1]))
-        y1 = float(np.clip((cy - h / 2) * sy, 0, orig_hw[0])); y2 = float(np.clip((cy + h / 2) * sy, 0, orig_hw[0]))
-        out.append({"class_id": int(k), "score": round(float(scores[i]), 4), "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)]})
-    return out
+
+    lw, lh, ox, oy = box[ys, xs].T
+    cx, cy = (xs + ox) * STRIDE, (ys + oy) * STRIDE
+    w, h = np.exp(np.clip(lw, -8.0, 8.0)) * STRIDE, np.exp(np.clip(lh, -8.0, 8.0)) * STRIDE
+    x1 = np.clip((cx - w / 2) * sx, 0.0, orig_hw[1])
+    x2 = np.clip((cx + w / 2) * sx, 0.0, orig_hw[1])
+    y1 = np.clip((cy - h / 2) * sy, 0.0, orig_hw[0])
+    y2 = np.clip((cy + h / 2) * sy, 0.0, orig_hw[0])
+    boxes = np.stack([x1, y1, x2, y2], axis=1)
+
+    if nms_iou is not None:
+        keep = []
+        for k in np.unique(cs):
+            idx = np.where(cs == k)[0]
+            for j in _nms(boxes[idx], scores[idx], nms_iou):
+                keep.append(idx[j])
+        keep = np.asarray(keep, dtype=np.int64)
+        ys, xs, cs, scores, boxes = ys[keep], xs[keep], cs[keep], scores[keep], boxes[keep]
+
+    order = np.argsort(-scores)[:topk]
+    return [{"class_id": int(cs[i]), "score": round(float(scores[i]), 5),
+             "bbox": [round(float(v), 1) for v in boxes[i]]} for i in order]
 
 
 def _nms(boxes, scores, iou_thr):
