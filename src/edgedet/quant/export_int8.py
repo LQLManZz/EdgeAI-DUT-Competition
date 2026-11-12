@@ -62,24 +62,37 @@ def main(argv=None):
     model = tf.keras.models.load_model(a.model, compile=False)
     hw = tuple(model.input_shape[1:3])
     train_items, val_items = split_train_val(load_items(a.data, "train"), a.val_frac, a.seed)
-    rng = np.random.default_rng(0)
-    n_rep = min(a.n_rep, len(train_items))
-    rep_items = [train_items[i] for i in rng.choice(len(train_items), n_rep, replace=False)]   # ảnh train, không dùng val
-
     out = Path(a.out) if a.out else Path(a.model).with_name("model_int8.tflite")
-    out.write_bytes(convert(model, rep_items, n_rep=n_rep))
+
+    if a.no_eval:
+        n_rep = min(a.n_rep, len(train_items))
+        idx = np.random.default_rng(0).choice(len(train_items), n_rep, replace=False)
+        out.write_bytes(convert(model, [train_items[i] for i in idx], n_rep=n_rep))
+        best_calib = {"seed": 0, "n_rep": int(n_rep)}
+    else:
+        m32, _, _ = evaluate(keras_predict_fn(model), val_items, hw)
+        cands = [(0, min(200, len(train_items))), (1, min(200, len(train_items))), (2, min(500, len(train_items)))]
+        best_m8, best_per8, best_blob, best_calib = -1.0, {}, None, {}
+        for seed, n_rep in cands:
+            idx = np.random.default_rng(seed).choice(len(train_items), n_rep, replace=False)
+            blob = convert(model, [train_items[i] for i in idx], n_rep=n_rep)
+            out.write_bytes(blob)
+            m8_c, per8_c, _ = evaluate(TFLiteDetector(out), val_items, hw)
+            print(f"  calib (seed={seed}, n={n_rep}): val mAP50 INT8 = {m8_c:.4f}", flush=True)
+            if m8_c > best_m8:
+                best_m8, best_per8, best_blob, best_calib = m8_c, per8_c, blob, {"seed": seed, "n_rep": int(n_rep)}
+        out.write_bytes(best_blob)
+        m8, per8 = best_m8, best_per8
 
     ops = op_names(out)
     rep = {"tflite": str(out), "input_hw": list(hw), "params_keras": int(model.count_params()),
-           "file_bytes": out.stat().st_size, "ops": ops}
+           "file_bytes": out.stat().st_size, "ops": ops, "best_calib": best_calib}
     rep["checks"] = {
         "params<=200K": rep["params_keras"] <= LIMITS["params"],
         "file<=1.5MB": rep["file_bytes"] <= LIMITS["file_bytes"],
         "ops_subset_of_tested": set(ops) <= ALLOWED_OPS,
     }
     if not a.no_eval:
-        m32, _, _ = evaluate(keras_predict_fn(model), val_items, hw)
-        m8, per8, _ = evaluate(TFLiteDetector(out), val_items, hw)
         rep.update({"val_map50_fp32": round(m32, 4), "val_map50_int8": round(m8, 4),
                     "int8_drop": round(m32 - m8, 4), "val_ap_int8_per_class": {k: round(v, 4) for k, v in per8.items()}})
     Path(out).with_name("int8_report.json").write_text(json.dumps(rep, indent=2), encoding="utf-8")

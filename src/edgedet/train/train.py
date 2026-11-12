@@ -39,7 +39,8 @@ DEFAULTS = {
     "lr": 2e-3, "warmup_epochs": 3, "weight_decay": 0.01,
     "box_weight": 1.0,          # loss tổng = focal(heatmap) + box_weight * (L1 + GIoU)(box)
     "neighbor_weight": 0.25,    # trọng số giám sát box ở 4 ô sát tâm (0 = chỉ giám sát 1 ô tâm)
-    "ema_decay": 0.9,           # trung bình trượt trọng số theo epoch ở nửa sau quá trình train (0 = tắt)
+    "ema_decay": 0.85,          # trung bình trượt trọng số theo epoch ở 25% epoch cuối (0 = tắt)
+    "close_mosaic": 15,         # tắt Mosaic ở N epoch cuối để tinh chỉnh trên ảnh gốc nguyên vẹn
     "full_train": False,        # True = train trên 100% dữ liệu (6000 ảnh) để nộp bài cuối
     "aug": {},                  # ghi đè DEFAULT_AUG trong data/dataset.py
     "val_frac": 0.1, "seed": 0,
@@ -50,7 +51,7 @@ DEFAULTS = {
 }
 CUSTOM_OBJECTS = {"heatmap_focal_loss": heatmap_focal_loss, "box_l1_loss": box_l1_loss,
                   "ActRangePenalty": ActRangePenalty}
-_OUR_PREFIXES = ("x8a", "x16a", "x16b", "neck", "head", "image")
+_OUR_PREFIXES = ("head", "image")
 
 
 def penalty_layers(model):
@@ -131,7 +132,8 @@ class ValMap(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         total_epochs = self.params["epochs"]
         last_epoch = epoch + 1 == total_epochs
-        if self.ema_decay > 0 and epoch + 1 >= max(2, total_epochs // 2):
+        ema_start = max(2, int(total_epochs * 0.75))
+        if self.ema_decay > 0 and epoch + 1 >= ema_start:
             cur = self.detector.get_weights()
             if self.ema_weights is None:
                 self.ema_weights = [w.copy() for w in cur]
@@ -142,11 +144,11 @@ class ValMap(tf.keras.callbacks.Callback):
         if (epoch + 1) % self.every == 0 or last_epoch:
             m, per, _ = evaluate(keras_predict_fn(self.detector), self.items, self.hw)
             used_ema = False
-            if self.ema_weights is not None and (last_epoch or (epoch + 1) >= int(total_epochs * 0.75)):
+            if self.ema_weights is not None and (last_epoch or (epoch + 1) >= ema_start + 4):
                 live = self.detector.get_weights()
                 self.detector.set_weights(self.ema_weights)
                 m_ema, per_ema, _ = evaluate(keras_predict_fn(self.detector), self.items, self.hw)
-                if m_ema >= m or (self.full_train and last_epoch):
+                if m_ema >= m:
                     m, per, used_ema = m_ema, per_ema, True
                 if not (last_epoch and used_ema):
                     self.detector.set_weights(live)
@@ -155,8 +157,8 @@ class ValMap(tf.keras.callbacks.Callback):
             tag = " (EMA)" if used_ema else ""
             txt = " ".join(f"{CLASS_NAMES[k]}={v:.3f}" for k, v in per.items())
             print(f"\n  val mAP50{tag} = {m:.4f}   [{txt}]")
-            if m > self.best or (self.full_train and last_epoch):
-                self.best = max(self.best, m)
+            if m > self.best:
+                self.best = m
                 if used_ema:
                     live = self.detector.get_weights()
                     self.detector.set_weights(self.ema_weights)
@@ -210,7 +212,7 @@ def main(argv=None):
     ds_train = add_dummy_targets(ds_train, model)
 
     vm = ValMap(val_items, hw, out, cfg["eval_every"], detector_of(model),
-                ema_decay=cfg.get("ema_decay", 0.9), full_train=cfg.get("full_train", False))
+                ema_decay=cfg.get("ema_decay", 0.85), full_train=cfg.get("full_train", False))
     if initial_epoch and (out / "best.json").exists():
         vm.best = json.loads((out / "best.json").read_text())["val_map50"]
 
@@ -218,10 +220,21 @@ def main(argv=None):
         def on_epoch_end(self, epoch, logs=None):
             (out / "best.json").write_text(json.dumps({"val_map50": vm.best}))
 
-    model.fit(ds_train, epochs=cfg["epochs"], initial_epoch=initial_epoch, verbose=2,
-              callbacks=[vm, SaveBest(),
-                         tf.keras.callbacks.ModelCheckpoint(out / "last.keras"),
-                         tf.keras.callbacks.CSVLogger(log_path, append=True)])
+    cbs = [vm, SaveBest(), tf.keras.callbacks.ModelCheckpoint(out / "last.keras"),
+           tf.keras.callbacks.CSVLogger(log_path, append=True)]
+    close_m = int(cfg.get("close_mosaic", 0))
+    split_ep = cfg["epochs"] - close_m
+    if cfg.get("aug", {}).get("mosaic", 0.0) > 0 and 0 < close_m < cfg["epochs"]:
+        if initial_epoch < split_ep:
+            model.fit(ds_train, epochs=split_ep, initial_epoch=initial_epoch, verbose=2, callbacks=cbs)
+            initial_epoch = split_ep
+        print(f"\n--- Tắt Mosaic ở {close_m} epoch cuối ({split_ep}->{cfg['epochs']}) để tinh chỉnh trên ảnh gốc ---")
+        clean_aug = {**cfg.get("aug", {}), "mosaic": 0.0}
+        ds_clean = add_dummy_targets(make_dataset(train_items, hw, bs, training=True, aug=clean_aug,
+                                                  neighbor_weight=cfg.get("neighbor_weight", 0.25)), model)
+        model.fit(ds_clean, epochs=cfg["epochs"], initial_epoch=initial_epoch, verbose=2, callbacks=cbs)
+    else:
+        model.fit(ds_train, epochs=cfg["epochs"], initial_epoch=initial_epoch, verbose=2, callbacks=cbs)
     print(f"Xong. mAP50 val tốt nhất = {vm.best:.4f}  -> {out / 'best.keras'}")
     return vm.best
 

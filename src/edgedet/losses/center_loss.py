@@ -50,7 +50,9 @@ class ActRangePenalty(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
         x = tf.nn.relu(tf.abs(y_pred) - self.threshold)
-        return tf.reduce_mean(tf.square(x), axis=list(range(1, len(y_pred.shape))))
+        # Dạng Huber: bậc hai khi vượt ngưỡng <= 8, tuyến tính khi > 8 để tránh nổ đạo hàm ở 40 epoch đầu
+        huber = tf.where(x <= 8.0, tf.square(x), 16.0 * x - 64.0)
+        return tf.reduce_mean(huber, axis=list(range(1, len(y_pred.shape))))
 
     def get_config(self):
         return {**super().get_config(), "threshold": self.threshold}
