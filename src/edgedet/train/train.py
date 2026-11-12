@@ -32,11 +32,15 @@ DEFAULTS = {
     "backbone": "custom",       # "custom" (H1-C, train từ đầu) | "mnv3s" (H1-P, backbone pretrained ImageNet)
     "pretrained": False,
     "mnv3_relu6": False,        # chỉ với backbone mnv3s: chặn ReLU ở 6 (giảm mất mát INT8, xem experiments.md #3)
+    "decoupled_head": False,    # tách riêng nhánh conv cho heatmap và box trong head_center
     "input_hw": [144, 192],
     "neck_c": 80, "head_c": 80,
     "epochs": 80, "batch": 64,
     "lr": 2e-3, "warmup_epochs": 3, "weight_decay": 0.01,
-    "box_weight": 1.0,          # loss tổng = focal(heatmap) + box_weight * L1(box)
+    "box_weight": 1.0,          # loss tổng = focal(heatmap) + box_weight * (L1 + GIoU)(box)
+    "neighbor_weight": 0.25,    # trọng số giám sát box ở 4 ô sát tâm (0 = chỉ giám sát 1 ô tâm)
+    "ema_decay": 0.9,           # trung bình trượt trọng số theo epoch ở nửa sau quá trình train (0 = tắt)
+    "full_train": False,        # True = train trên 100% dữ liệu (6000 ảnh) để nộp bài cuối
     "aug": {},                  # ghi đè DEFAULT_AUG trong data/dataset.py
     "val_frac": 0.1, "seed": 0,
     "eval_every": 2,            # tính mAP val mỗi N epoch (tốn ~vài giây trên GPU)
@@ -111,26 +115,56 @@ def add_dummy_targets(ds, model):
 
 
 class ValMap(tf.keras.callbacks.Callback):
-    """Mỗi `every` epoch: đo mAP50 trên tập val, lưu best.keras nếu tốt hơn."""
+    """Mỗi `every` epoch: đo mAP50 trên tập val, lưu best.keras nếu tốt hơn. Hỗ trợ EMA trọng số ở nửa sau."""
 
-    def __init__(self, items, input_hw, out, every, detector):
+    def __init__(self, items, input_hw, out, every, detector, ema_decay=0.9, full_train=False):
         super().__init__()
         self.items, self.hw, self.out, self.every = items, input_hw, Path(out), every
         self.detector = detector          # model 2 output (chung trọng số với model đang train)
+        self.ema_decay = float(ema_decay)
+        self.full_train = bool(full_train)
+        self.ema_weights = None
         self.best = -1.0
         self.last = float("nan")
 
     def on_epoch_end(self, epoch, logs=None):
-        last_epoch = epoch + 1 == self.params["epochs"]
+        total_epochs = self.params["epochs"]
+        last_epoch = epoch + 1 == total_epochs
+        if self.ema_decay > 0 and epoch + 1 >= max(2, total_epochs // 2):
+            cur = self.detector.get_weights()
+            if self.ema_weights is None:
+                self.ema_weights = [w.copy() for w in cur]
+            else:
+                d = self.ema_decay
+                self.ema_weights = [d * e + (1.0 - d) * w for e, w in zip(self.ema_weights, cur)]
+
         if (epoch + 1) % self.every == 0 or last_epoch:
             m, per, _ = evaluate(keras_predict_fn(self.detector), self.items, self.hw)
+            used_ema = False
+            if self.ema_weights is not None and (last_epoch or (epoch + 1) >= int(total_epochs * 0.75)):
+                live = self.detector.get_weights()
+                self.detector.set_weights(self.ema_weights)
+                m_ema, per_ema, _ = evaluate(keras_predict_fn(self.detector), self.items, self.hw)
+                if m_ema >= m or (self.full_train and last_epoch):
+                    m, per, used_ema = m_ema, per_ema, True
+                if not (last_epoch and used_ema):
+                    self.detector.set_weights(live)
+
             self.last = m
+            tag = " (EMA)" if used_ema else ""
             txt = " ".join(f"{CLASS_NAMES[k]}={v:.3f}" for k, v in per.items())
-            print(f"\n  val mAP50 = {m:.4f}   [{txt}]")
-            if m > self.best:
-                self.best = m
-                self.detector.save(self.out / "best.keras")
-                print(f"  -> best.keras (mAP50 {m:.4f})")
+            print(f"\n  val mAP50{tag} = {m:.4f}   [{txt}]")
+            if m > self.best or (self.full_train and last_epoch):
+                self.best = max(self.best, m)
+                if used_ema:
+                    live = self.detector.get_weights()
+                    self.detector.set_weights(self.ema_weights)
+                    self.detector.save(self.out / "best.keras")
+                    if not last_epoch:
+                        self.detector.set_weights(live)
+                else:
+                    self.detector.save(self.out / "best.keras")
+                print(f"  -> best.keras (mAP50 {m:.4f}{tag})")
         logs["val_map50"] = self.last                 # ghi vào log.csv (nan ở epoch không đo)
 
 
@@ -148,12 +182,17 @@ def main(argv=None):
     (out / "config.json").write_text(json.dumps({**cfg, "input_hw": list(cfg["input_hw"])}, indent=2), encoding="utf-8")
     print("GPU:", tf.config.list_physical_devices("GPU") or "KHÔNG CÓ (train trên CPU sẽ rất chậm)")
 
-    train_items, val_items = split_train_val(load_items(a.data, "train"), cfg["val_frac"], cfg["seed"])
+    all_items = load_items(a.data, "train")
+    train_items, val_items = split_train_val(all_items, cfg["val_frac"], cfg["seed"])
+    if cfg.get("full_train"):
+        train_items = all_items
     if a.limit:
         train_items, val_items = train_items[:a.limit], val_items[:max(16, a.limit // 10)]
-    print(f"train {len(train_items)} ảnh, val {len(val_items)} ảnh, input {cfg['input_hw']}")
+    print(f"train {len(train_items)} ảnh, val {len(val_items)} ảnh, input {cfg['input_hw']}"
+          + (" (FULL TRAIN 100%)" if cfg.get("full_train") else ""))
     hw, bs = cfg["input_hw"], min(cfg["batch"], len(train_items))
-    ds_train = make_dataset(train_items, hw, bs, training=True, aug=cfg["aug"])
+    ds_train = make_dataset(train_items, hw, bs, training=True, aug=cfg["aug"],
+                            neighbor_weight=cfg.get("neighbor_weight", 0.25))
     steps = len(train_items) // bs
 
     # Train tiếp nếu đã có last.keras (Colab hay ngắt phiên giữa chừng)
@@ -169,7 +208,8 @@ def main(argv=None):
     assert model.count_params() <= 200_000
     ds_train = add_dummy_targets(ds_train, model)
 
-    vm = ValMap(val_items, hw, out, cfg["eval_every"], detector_of(model))
+    vm = ValMap(val_items, hw, out, cfg["eval_every"], detector_of(model),
+                ema_decay=cfg.get("ema_decay", 0.9), full_train=cfg.get("full_train", False))
     if initial_epoch and (out / "best.json").exists():
         vm.best = json.loads((out / "best.json").read_text())["val_map50"]
 

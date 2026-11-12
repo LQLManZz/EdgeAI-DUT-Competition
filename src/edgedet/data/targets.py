@@ -41,13 +41,14 @@ def _draw_gaussian(hm, cx, cy, radius):
                out=hm[cy - t:cy + b, cx - l:cx + ri])
 
 
-def encode(boxes, classes, input_hw, num_classes=7):
+def encode(boxes, classes, input_hw, num_classes=7, neighbor_weight=0.25):
     """boxes: (N, 4) [x1,y1,x2,y2] theo pixel ẢNH INPUT (đã resize); classes: (N,) int.
 
     Trả:
       hm      (Hf, Wf, C) float32 – đáp án heatmap
-      box_t   (Hf, Wf, 5) float32 – 4 kênh đáp án box + kênh 5 là mask (1 tại ô có tâm vật, 0 nơi khác)
-    Mask được gói chung vào box_t để Keras đưa nó vào hàm loss cùng với đáp án (xem losses/center_loss.py).
+      box_t   (Hf, Wf, 5) float32 – 4 kênh đáp án box + kênh 5 là mask (1.0 tại ô tâm, neighbor_weight tại 4 ô sát tâm)
+    Giám sát thêm 4 ô sát tâm (khi bán kính Gauss >= 1): nếu lượng tử hóa INT8 làm đỉnh lệch 1 ô,
+    ô bên cạnh vẫn được học đáp án [log(w/8), log(h/8), cx - nx, cy - ny] nên khôi phục đúng cùng 1 box.
     """
     H, W = input_hw
     hf, wf = H // STRIDE, W // STRIDE
@@ -59,6 +60,13 @@ def encode(boxes, classes, input_hw, num_classes=7):
             continue                                        # box suy biến (vd. bị cắt hết khi augment)
         cx, cy = (x1 + x2) / 2 / STRIDE, (y1 + y2) / 2 / STRIDE   # tâm, đơn vị ô lưới (số thực)
         ix, iy = min(int(cx), wf - 1), min(int(cy), hf - 1)         # ô chứa tâm
-        _draw_gaussian(hm[:, :, int(k)], ix, iy, gaussian_radius(h / STRIDE, w / STRIDE))
-        box_t[iy, ix] = [np.log(w / STRIDE), np.log(h / STRIDE), cx - ix, cy - iy, 1.0]
+        rad = gaussian_radius(h / STRIDE, w / STRIDE)
+        _draw_gaussian(hm[:, :, int(k)], ix, iy, rad)
+        lw, lh = np.log(w / STRIDE), np.log(h / STRIDE)
+        box_t[iy, ix] = [lw, lh, cx - ix, cy - iy, 1.0]
+        if neighbor_weight > 0 and int(rad) >= 1:
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                ny, nx = iy + dy, ix + dx
+                if 0 <= ny < hf and 0 <= nx < wf and box_t[ny, nx, 4] < neighbor_weight:
+                    box_t[ny, nx] = [lw, lh, cx - nx, cy - ny, neighbor_weight]
     return hm, box_t

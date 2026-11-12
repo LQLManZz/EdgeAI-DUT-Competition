@@ -169,10 +169,11 @@ Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắ
 3d. ~~#8 `h1p_pen_240x320_e120` (INT8 0,9181) và #9 `h1p_pen_240x320_bw2` (INT8 0,9257)~~. Cả hai đã xong; #9 là tốt nhất hiện tại. Không train dài hơn 80 epoch nữa, vì INT8 mất nhiều hơn.
 3f. ~~#10 `h1p_pen_240x320_bw2_r2` (INT8 0,9025) và #11 `h1p_pen_240x320_bw3` (INT8 0,9200)~~. Đã xong: nhiễu INT8 giữa hai lần train khoảng 2 điểm.
 3g. **Đang xếp hàng** (`configs/queue.json`): chẩn đoán `probe` cho 5 bản 240×320 đã train (#9, #10, #6, #8, #11). Không train lại; các bước đã có kết quả tự bỏ qua. Submission của #9, #6, #8 sẽ được làm lại vì file intent mới hơn.
-3e. Ý tưởng sau đó, theo kết quả phân tích lỗi:
-   - Tăng dần trọng số phạt (0 → 0,01 trong khoảng 10 epoch) để bớt dao động lúc đầu. Cẩn thận: #8 cho thấy học "hiệu quả hơn" có thể làm INT8 mất nhiều hơn.
-   - EMA trọng số.
-   - Train lại trên toàn bộ train+val trước khi chốt.
+3e. **Đã triển khai trong code (Giai đoạn 2 – chuẩn bị cho các lần train kế tiếp):**
+   - **Giám sát box ở 4 ô sát tâm (`neighbor_weight=0.25` trong `targets.py`):** Khi đỉnh INT8 lệch 1 ô sang ô cạnh tâm, ô đó đã được học đáp án `[log(w/8), log(h/8), cx - nx, cy - ny]` nên khôi phục đúng cùng 1 box thật.
+   - **Cộng GIoU Loss vào `box_l1_loss` (`center_loss.py`):** Tối ưu trực tiếp độ trùng khít hình chữ nhật (IoU $\ge 0,5$) để giảm phần mất điểm do "box lệch" (+2,5 đến +2,8 điểm).
+   - **Thu hẹp dải logit `head_hm` (`logit_clip=8.0` trong `heatmap_focal_loss`):** Ngăn logit vùng nền trôi xuống $-15\dots -20$ gây lãng phí 80% mức lượng tử INT8.
+   - **EMA trọng số (`ema_decay=0.9` ở nửa sau) + hỗ trợ `full_train=true` (6.000 ảnh) trong `train.py`:** Giảm nhiễu trọng số cuối quá trình train và tận dụng 100% dữ liệu khi xuất model nộp.
 4. Augmentation: tắt bớt hoặc tăng mạnh hơn; thêm làm mờ; ghép 4 ảnh (mosaic).
 5. Lịch learning rate và số epoch; `box_weight`.
 

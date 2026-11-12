@@ -68,3 +68,18 @@ def test_decode_int8_plateau_tie_and_nms():
     new_dets = decode_center(logits, box_t[..., :4], input_hw, orig, score_thr=0.5)
     assert len(old_dets) == 2                   # decode cũ sinh 2 box cho 1 vật (ô bên cạnh có box chưa train)
     assert len(new_dets) == 1 and iou(new_dets[0]["bbox"], gt[0]) > 0.99
+
+
+def test_neighbor_box_supervision_recovers_shifted_peak():
+    # Khi đỉnh heatmap bị lệch hẳn 1 ô sang (iy, ix+1), ô sát tâm đã được gán nhãn box nên vẫn khôi phục đúng box
+    input_hw, orig = (144, 192), (240, 320)
+    gt = np.array([[60.0, 60.0, 140.0, 140.0]])
+    s = np.array([input_hw[1] / orig[1], input_hw[0] / orig[0]] * 2)
+    hm, box_t = encode(gt * s, [2], input_hw, neighbor_weight=0.25)
+    iy, ix = np.unravel_index(np.argmax(hm[:, :, 2]), hm[:, :, 2].shape)
+    assert box_t[iy, ix, 4] == 1.0 and box_t[iy, ix + 1, 4] == 0.25
+
+    logits = np.full_like(hm, -10.0)
+    logits[iy, ix + 1, 2] = 8.0                 # giả sử đỉnh rơi vào ô bên cạnh (iy, ix+1)
+    dets = decode_center(logits, box_t[..., :4], input_hw, orig, score_thr=0.5)
+    assert len(dets) == 1 and iou(dets[0]["bbox"], gt[0]) > 0.99

@@ -116,6 +116,6 @@ Profile H1-C @144×192: CONV_2D 61%, DEPTHWISE 34%, ADD 5%, RESIZE 0,3%. Arena g
 
 ## 7. Việc tiếp theo (GĐ3)
 1. Dataset Kaggle → `data/raw/`; pipeline augmentation; chia train/val.
-2. Loss: focal loss (heatmap, Gaussian theo kích thước vật) + L1 trên `log(w/8)`, `log(h/8)` và offset (± GIoU).
-3. Train H1-C, H1-P, H2 ở 144×192 cùng lịch → so mAP50 / P / R / lỗi đếm / độ lệch tâm.
-4. Knowledge distillation từ YOLO11n/YOLOv8n (teacher, Ultralytics) theo kiểu offline.
+2. Loss: focal loss (heatmap, Gaussian theo kích thước vật + phạt nhẹ logit ngoài $[-8, 8]$ để giữ dải lượng tử INT8 hẹp) + L1 kết hợp **GIoU** trên `log(w/8)`, `log(h/8)` và offset, giám sát cả 4 ô sát tâm (`neighbor_weight = 0,25`) để chống lệch đỉnh INT8.
+3. Train H1-C, H1-P, H2 ở 144×192 cùng lịch, kết hợp **EMA trọng số** nửa sau quá trình train → so mAP50 / P / R / lỗi đếm / độ lệch tâm.
+4. Khi chốt cấu hình cuối, train trên **100% dữ liệu (`full_train: true`, 6.000 ảnh)**; chỉ dùng thêm teacher/pretrained nếu các bước trên chưa đạt trần mục tiêu.

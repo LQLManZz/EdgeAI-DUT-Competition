@@ -149,17 +149,17 @@ def _augment(img, boxes, classes, input_hw, aug):
 
 # ---------------------------------------------------------------- tf.data
 
-def _encode_tf(x, boxes, classes, input_hw, num_classes):
+def _encode_tf(x, boxes, classes, input_hw, num_classes, neighbor_weight=0.25):
     def _np(b, c):
         m = c >= 0
-        return encode(b[m], c[m], input_hw, num_classes)
+        return encode(b[m], c[m], input_hw, num_classes, neighbor_weight=neighbor_weight)
     hm, bt = tf.numpy_function(_np, [boxes, classes], [tf.float32, tf.float32])
     hf, wf = input_hw[0] // 8, input_hw[1] // 8
     hm.set_shape((hf, wf, num_classes)); bt.set_shape((hf, wf, 5))
     return x, {"head_hm": hm, "head_box": bt}
 
 
-def make_dataset(items, input_hw, batch, training, aug=None, num_classes=7, cache=True):
+def make_dataset(items, input_hw, batch, training, aug=None, num_classes=7, cache=True, neighbor_weight=0.25):
     """Dataset cho model.fit: phần tử = (ảnh (B,H,W,3) [-1,1], {"head_hm": ..., "head_box": ...}).
 
     cache=True giữ ảnh đã giải nén (uint8) trong RAM: 6000 ảnh ~ 1,4 GB, đọc lại từ đĩa mỗi epoch thì rất chậm.
@@ -176,7 +176,8 @@ def make_dataset(items, input_hw, batch, training, aug=None, num_classes=7, cach
     else:
         s = tf.constant([input_hw[1] / ORIG_HW[1], input_hw[0] / ORIG_HW[0]] * 2, tf.float32)
         ds = ds.map(lambda im, b, c: (preprocess(im, input_hw), b * s, c), num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.map(lambda x, b, c: _encode_tf(x, b, c, input_hw, num_classes), num_parallel_calls=tf.data.AUTOTUNE)
+    nw = neighbor_weight if training else 0.0
+    ds = ds.map(lambda x, b, c: _encode_tf(x, b, c, input_hw, num_classes, nw), num_parallel_calls=tf.data.AUTOTUNE)
     return ds.batch(batch, drop_remainder=training).prefetch(tf.data.AUTOTUNE)
 
 
