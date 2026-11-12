@@ -99,3 +99,19 @@ def test_decoupled_head_and_mosaic():
         classes[i, 0] = i
     im_m, b_m, c_m = _mosaic4_np(imgs, boxes, classes, 144, 192, prob=1.0, min_vis=0.4)
     assert im_m.shape == (4, 144, 192, 3) and (c_m[0] >= 0).sum() == 4
+
+
+def test_kd_teacher_student_and_ste_quant():
+    import tensorflow as tf
+    from edgedet.models.edgedet import build_edgedet
+    from edgedet.train.train import DEFAULTS, build_and_compile, detector_of
+
+    t = build_edgedet("mnv3l", "center", (96, 128), neck_c=160, head_c=160, pretrained=False, decoupled_head=True)
+    assert t.count_params() > 3_000_000
+    cfg = {**DEFAULTS, "backbone": "mnv3s", "pretrained": False, "decoupled_head": True, "input_hw": (96, 128),
+           "act_penalty": {"threshold": 16, "weight": 0.01},
+           "kd": {"teacher_backbone": "mnv3l", "hm_weight": 1.5, "box_weight": 0.5}}
+    m = build_and_compile(cfg, steps_per_epoch=10, teacher=t)
+    det = detector_of(m)
+    assert det.count_params() == 197_139 <= 200_000
+    assert len(m.outputs) == 2 + 28 + 2   # 2 detect + 28 act_penalty (mnv3s) + 2 KD (kd_hm, kd_box)

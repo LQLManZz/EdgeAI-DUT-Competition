@@ -1,9 +1,7 @@
 {
-  "_note": "Thứ tự thí nghiệm mà scripts/colab_run.py sẽ chạy. Các model đã xong trên Drive sẽ tự bỏ qua bước train/export/probe. h1p_v3_240x320 và h1p_v3_full_240x320 là Giai đoạn 3B (Huber ActRangePenalty + phạt neck, close_mosaic=15, auto-best calibration INT8).",
+  "_note": "Thứ tự thí nghiệm mà scripts/colab_run.py sẽ chạy. h1p_kd_240x320 và h1p_kd_full_240x320 sử dụng Teacher MobileNetV3-Large (3-scale FPN + SE) chưng cất tri thức (KD) + STE FakeQuant INT8 sang Student 197K params.",
   "queue": [
-    "h1p_v2_240x320",
-    "h1p_v2_full_240x320",
-    "h1p_v3_240x320",
-    "h1p_v3_full_240x320"
+    "h1p_kd_240x320",
+    "h1p_kd_full_240x320"
   ]
 }

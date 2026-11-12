@@ -90,6 +90,23 @@ def backbone_mnv3s(inp, pretrained=False, extra8=MNV3S_EXTRA8, extra16=MNV3S_EXT
     return f8, f16
 
 
+def backbone_mnv3l(inp, pretrained=False):
+    """Teacher backbone: MobileNetV3-Large α=1.0 (có SE + h-swish), kết hợp 3 tầng đặc trưng stride 32 -> 16 -> 8.
+    Chỉ dùng làm Teacher trên GPU (FP32) để chưng cất tri thức (KD) sang Student H1-P <= 200K params."""
+    m = tf.keras.applications.MobileNetV3Large(
+        input_tensor=inp, alpha=1.0, minimalistic=False, include_top=False,
+        weights="imagenet" if pretrained else None, include_preprocessing=False)
+    f8 = m.get_layer("expanded_conv_5_add").output     # stride 8, 40 kênh
+    f16 = m.get_layer("expanded_conv_11_add").output   # stride 16, 112 kênh
+    f32 = m.get_layer("expanded_conv_14_add").output   # stride 32, 160 kênh
+    u32 = _cbr(f32, 112, 1, 1, "t_l32")
+    u32 = L.Resizing(f16.shape[1], f16.shape[2], interpolation="nearest", name="t_up32")(u32)
+    f16 = L.Add(name="t_add16")([f16, u32])
+    f16 = _ir(f16, 384, 128, 1, "t_x16")
+    f8 = _ir(f8, 192, 64, 1, "t_x8")
+    return f8, f16
+
+
 def neck_pan_lite(f8, f16, c=64):
     """stride 16 -> 1x1 -> nearest x2 (RESIZE_NEAREST_NEIGHBOR) + 1x1(stride 8) -> dw-sep 3x3."""
     a = _cbr(f16, c, 1, 1, "neck_l16")
@@ -132,6 +149,8 @@ def build_edgedet(backbone="custom", head="center", input_hw=(128, 160), num_cla
         f8, f16 = backbone_custom(inp, blocks)
     elif backbone == "mnv3s":
         f8, f16 = backbone_mnv3s(inp, pretrained, relu6=mnv3_relu6)
+    elif backbone == "mnv3l":
+        f8, f16 = backbone_mnv3l(inp, pretrained)
     else:
         raise ValueError(backbone)
     x = neck_pan_lite(f8, f16, neck_c)

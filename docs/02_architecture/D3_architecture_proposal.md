@@ -48,7 +48,9 @@
 
 Cả ba dùng chung neck, chung độ phân giải, chung pipeline dữ liệu, nên so sánh công bằng. Quét độ phân giải (H3) chạy sau trên biến thể thắng.
 
-**Khai báo pretrained (nếu chọn H1-P):** trọng số ImageNet của `tf.keras.applications.MobileNetV3Small(alpha=1.0, minimalistic=True)`, do Keras/Google phát hành (file ~2,1 MB tải từ storage.googleapis.com qua Keras). Phải ghi vào hồ sơ dự thi.
+**Khai báo pretrained (nếu chọn H1-P và Knowledge Distillation GĐ5):**
+1. **Student (`backbone="mnv3s"`):** trọng số ImageNet của `tf.keras.applications.MobileNetV3Small(alpha=1.0, minimalistic=True)` (~2,1 MB tải từ `storage.googleapis.com` qua Keras).
+2. **Teacher (`backbone="mnv3l"`, chỉ dùng lúc train KD trên GPU, không xuất ra `.tflite`):** trọng số ImageNet của `tf.keras.applications.MobileNetV3Large(alpha=1.0, minimalistic=False)` (~13 MB tải từ `storage.googleapis.com` qua Keras). Phải ghi cả 2 vào hồ sơ dự thi.
 
 ## 4. Hợp đồng input / output
 

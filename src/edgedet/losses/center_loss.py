@@ -10,25 +10,32 @@ Model có 2 output nên có 2 loss; Keras cộng chúng lại theo loss_weights 
 import tensorflow as tf
 
 
-def heatmap_focal_loss(y_true, logits, alpha=2.0, beta=4.0, logit_clip=8.0, logit_reg=0.02):
-    """Focal loss biến thể CenterNet + phạt nhẹ logits quá lớn để thu hẹp dải lượng tử INT8 của head_hm.
+def _ste_fake_quant8(x):
+    """Mô phỏng lượng tử hóa INT8 (256 mức) bằng Straight-Through Estimator (STE) ngay trong hàm loss.
+    Forward đi qua lưới 256 mức; backward giữ nguyên đạo hàm của x -> không thêm bất kỳ op nào vào file .tflite."""
+    lo = tf.stop_gradient(tf.reduce_min(x))
+    hi = tf.stop_gradient(tf.reduce_max(x))
+    scale = tf.maximum((hi - lo) / 255.0, 1e-4)
+    xq = tf.round((x - lo) / scale) * scale + lo
+    return x + tf.stop_gradient(xq - x)
 
-    Vấn đề: lưới 18x24x7 có ~3000 ô, nhưng mỗi vật chỉ có 1 ô "đúng". Nếu dùng cross-entropy thường,
-    hàng nghìn ô nền (dễ đoán = 0) sẽ áp đảo loss, model học cách đoán "không có gì" ở mọi nơi.
-    Focal loss sửa bằng 2 hệ số:
-      (1-p)^alpha / p^alpha – ô đã đoán đúng (dễ) gần như không đóng góp loss -> tập trung vào ô khó
-      (1-y)^beta            – ô nền nằm gần tâm vật (y gần 1) bị phạt nhẹ, vì đoán cao ở đó cũng "gần đúng"
-    Ngoài [-logit_clip, +logit_clip] (p < 0.0003 hoặc p > 0.9997), phạt nhẹ phần vượt ngưỡng để head_hm không
-    trôi xuống -15..-20 gây lãng phí 80% số mức INT8 ở vùng nền.
-    """
-    y_true = tf.cast(y_true, logits.dtype)
+
+def _focal_core(y_true, logits, pos, n_pos, alpha=2.0, beta=4.0):
     p = tf.sigmoid(logits)
-    log_p, log_1mp = tf.math.log_sigmoid(logits), tf.math.log_sigmoid(-logits)   # ổn định số học hơn log(sigmoid)
-    pos = tf.cast(y_true >= 1.0 - 1e-4, logits.dtype)                             # ô chứa tâm vật (đỉnh đồi = 1)
+    log_p, log_1mp = tf.math.log_sigmoid(logits), tf.math.log_sigmoid(-logits)
     pos_loss = -pos * tf.pow(1 - p, alpha) * log_p
     neg_loss = -(1 - pos) * tf.pow(1 - y_true, beta) * tf.pow(p, alpha) * log_1mp
+    return (tf.reduce_sum(pos_loss) + tf.reduce_sum(neg_loss)) / n_pos
+
+
+def heatmap_focal_loss(y_true, logits, alpha=2.0, beta=4.0, logit_clip=8.0, logit_reg=0.02):
+    """Focal loss biến thể CenterNet + STE FakeQuant INT8 + phạt nhẹ logits quá lớn để thu hẹp dải lượng tử INT8."""
+    y_true = tf.cast(y_true, logits.dtype)
+    pos = tf.cast(y_true >= 1.0 - 1e-4, logits.dtype)                             # ô chứa tâm vật (đỉnh đồi = 1)
     n_pos = tf.maximum(tf.reduce_sum(pos), 1.0)
-    focal = (tf.reduce_sum(pos_loss) + tf.reduce_sum(neg_loss)) / n_pos
+    focal_fp32 = _focal_core(y_true, logits, pos, n_pos, alpha, beta)
+    focal_int8 = _focal_core(y_true, _ste_fake_quant8(logits), pos, n_pos, alpha, beta)
+    focal = 0.7 * focal_fp32 + 0.3 * focal_int8
     over = tf.nn.relu(tf.abs(logits) - logit_clip)
     return focal + logit_reg * tf.reduce_mean(tf.square(over))
 
@@ -37,11 +44,8 @@ def heatmap_focal_loss(y_true, logits, alpha=2.0, beta=4.0, logit_clip=8.0, logi
 class ActRangePenalty(tf.keras.losses.Loss):
     """Phạt activation có |x| vượt ngưỡng – để khoảng giá trị (range) hẹp lại, INT8 bớt thô.
 
-    Vì sao: thí nghiệm #2 (backbone pretrained) có activation tới ~309 -> mất 4 điểm mAP khi lên INT8.
-    Thí nghiệm #3 CẮT cứng ở 6 -> đặc trưng pretrained bị phá (FP32 0.67). Ở đây chỉ PHẠT nhẹ phần vượt ngưỡng:
-    loss = mean( max(|x| - threshold, 0)^2 ). Giá trị dưới ngưỡng không bị phạt; giá trị càng vượt xa càng bị phạt
-    nặng, và luôn có gradient -> model tự học cách thu nhỏ outlier mà vẫn giữ đặc trưng.
-    y_true không dùng (chỉ là số 0 giả để Keras chấp nhận output này có loss).
+    Dùng bậc hai x^2 cho toàn bộ dải vượt ngưỡng <= 48 (tức |y_pred| <= 64, giống hệt h1p_v2 chỉ mất 1,01% INT8),
+    và chỉ chặn tuyến tính khi vượt quá 48 để tránh nổ đạo hàm ở vài epoch đầu tiên khi activation ~180–250.
     """
 
     def __init__(self, threshold=16.0, name="act_range_penalty", **kw):
@@ -50,12 +54,60 @@ class ActRangePenalty(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
         x = tf.nn.relu(tf.abs(y_pred) - self.threshold)
-        # Dạng Huber: bậc hai khi vượt ngưỡng <= 8, tuyến tính khi > 8 để tránh nổ đạo hàm ở 40 epoch đầu
-        huber = tf.where(x <= 8.0, tf.square(x), 16.0 * x - 64.0)
-        return tf.reduce_mean(huber, axis=list(range(1, len(y_pred.shape))))
+        quad_capped = tf.where(x <= 48.0, tf.square(x), 96.0 * x - 2304.0)
+        return tf.reduce_mean(quad_capped, axis=list(range(1, len(y_pred.shape))))
 
     def get_config(self):
         return {**super().get_config(), "threshold": self.threshold}
+
+
+@tf.keras.utils.register_keras_serializable("edgedet")
+class KDHmLoss(tf.keras.losses.Loss):
+    """Chưng cất tri thức (Knowledge Distillation) cho Heatmap từ Teacher FP32 sang Student (có STE INT8).
+    y_pred = concat([hm_student (C), hm_teacher (C)], axis=-1)."""
+
+    def __init__(self, num_classes=7, name="kd_hm_loss", **kw):
+        super().__init__(name=name, **kw)
+        self.num_classes = int(num_classes)
+
+    def call(self, y_true, y_pred):
+        c = self.num_classes
+        s_logits = y_pred[..., :c]
+        t_logits = tf.stop_gradient(y_pred[..., c:2 * c])
+        s_q = _ste_fake_quant8(s_logits)
+        p_t = tf.sigmoid(t_logits)
+        p_s = tf.sigmoid(s_q)
+        # Trọng số Quality-Focal: tập trung mạnh vào các đỉnh vật của Teacher (p_t cao) và nơi Student đoán lệch
+        w = tf.square(tf.abs(p_t - p_s)) * (1.0 + 4.0 * p_t)
+        kl = (tf.nn.sigmoid_cross_entropy_with_logits(labels=p_t, logits=s_q)
+              - tf.nn.sigmoid_cross_entropy_with_logits(labels=p_t, logits=t_logits))
+        n_pos = tf.maximum(tf.reduce_sum(tf.cast(p_t > 0.3, y_pred.dtype), axis=[1, 2, 3]), 1.0)
+        return tf.reduce_sum(w * tf.maximum(kl, 0.0), axis=[1, 2, 3]) / n_pos
+
+    def get_config(self):
+        return {**super().get_config(), "num_classes": self.num_classes}
+
+
+@tf.keras.utils.register_keras_serializable("edgedet")
+class KDBoxLoss(tf.keras.losses.Loss):
+    """Chưng cất tri thức Box (L1 + GIoU) từ Teacher sang Student tại mọi ô mà Teacher tự tin (max(p_t) >= 0.25).
+    y_pred = concat([box_student (4), box_teacher (4), hm_teacher (C)], axis=-1)."""
+
+    def __init__(self, thr=0.25, name="kd_box_loss", **kw):
+        super().__init__(name=name, **kw)
+        self.thr = float(thr)
+
+    def call(self, y_true, y_pred):
+        s_box = y_pred[..., :4]
+        t_box = tf.stop_gradient(y_pred[..., 4:8])
+        t_hm = tf.stop_gradient(y_pred[..., 8:])
+        t_obj = tf.reduce_max(tf.sigmoid(t_hm), axis=-1, keepdims=True)
+        mask = tf.where(t_obj >= self.thr, t_obj, tf.zeros_like(t_obj))
+        pseudo_target = tf.concat([t_box, mask], axis=-1)
+        return box_l1_loss(pseudo_target, s_box, giou_weight=1.0)
+
+    def get_config(self):
+        return {**super().get_config(), "thr": self.thr}
 
 
 def box_l1_loss(y_true, pred, giou_weight=1.0):

@@ -1,0 +1,26 @@
+{
+  "backbone": "mnv3s",
+  "pretrained": true,
+  "decoupled_head": true,
+  "init_from": "h1p_v2_240x320",
+  "input_hw": [240, 320],
+  "epochs": 60,
+  "lr": 0.0008,
+  "box_weight": 1.5,
+  "neighbor_weight": 0.25,
+  "ema_decay": 0.85,
+  "close_mosaic": 15,
+  "aug": {
+    "mosaic": 0.3
+  },
+  "act_penalty": {
+    "threshold": 16,
+    "weight": 0.01
+  },
+  "kd": {
+    "teacher_backbone": "mnv3l",
+    "teacher_epochs": 55,
+    "hm_weight": 1.5,
+    "box_weight": 0.5
+  }
+}

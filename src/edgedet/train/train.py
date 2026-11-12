@@ -25,11 +25,11 @@ import tensorflow as tf
 
 from edgedet.data.dataset import CLASS_NAMES, load_items, make_dataset, split_train_val
 from edgedet.eval.evaluate import evaluate, keras_predict_fn
-from edgedet.losses.center_loss import ActRangePenalty, box_l1_loss, heatmap_focal_loss
+from edgedet.losses.center_loss import ActRangePenalty, KDBoxLoss, KDHmLoss, box_l1_loss, heatmap_focal_loss
 from edgedet.models.edgedet import build_edgedet
 
 DEFAULTS = {
-    "backbone": "custom",       # "custom" (H1-C, train từ đầu) | "mnv3s" (H1-P, backbone pretrained ImageNet)
+    "backbone": "custom",       # "custom" (H1-C) | "mnv3s" (H1-P, <=200K) | "mnv3l" (Teacher ~3.3M)
     "pretrained": False,
     "mnv3_relu6": False,        # chỉ với backbone mnv3s: chặn ReLU ở 6 (giảm mất mát INT8, xem experiments.md #3)
     "decoupled_head": False,    # tách riêng nhánh conv cho heatmap và box trong head_center
@@ -48,10 +48,13 @@ DEFAULTS = {
     # Phạt activation vượt ngưỡng ở backbone MobileNetV3 (giảm range -> INT8 bớt mất điểm), vd.
     #   {"threshold": 16, "weight": 0.01}. null = tắt. Xem losses/center_loss.py::ActRangePenalty.
     "act_penalty": None,
+    # Chưng cất tri thức (Teacher-Student KD): {"teacher_backbone": "mnv3l", "teacher_epochs": 55, "hm_weight": 1.5, "box_weight": 0.5}
+    "kd": None,
+    "init_from": None,          # tên thí nghiệm cùng kiến trúc để warm-start Student (vd. "h1p_v2_240x320")
 }
 CUSTOM_OBJECTS = {"heatmap_focal_loss": heatmap_focal_loss, "box_l1_loss": box_l1_loss,
-                  "ActRangePenalty": ActRangePenalty}
-_OUR_PREFIXES = ("head", "image")
+                  "ActRangePenalty": ActRangePenalty, "KDHmLoss": KDHmLoss, "KDBoxLoss": KDBoxLoss}
+_OUR_PREFIXES = ("x8", "x16", "neck", "head", "image")
 
 
 def penalty_layers(model):
@@ -70,32 +73,57 @@ def load_config(path, **override):
     return cfg
 
 
-def build_and_compile(cfg, steps_per_epoch):
+def build_and_compile(cfg, steps_per_epoch, teacher=None, out_dir=None):
     model = build_edgedet(cfg["backbone"], "center", cfg["input_hw"], neck_c=cfg["neck_c"], head_c=cfg["head_c"],
                           pretrained=cfg["pretrained"], mnv3_relu6=cfg["mnv3_relu6"],
                           decoupled_head=cfg.get("decoupled_head", False))
-    total = cfg["epochs"] * steps_per_epoch
+    init_from = cfg.get("init_from")
+    if init_from and out_dir is not None:
+        for name in ([init_from] if isinstance(init_from, str) else init_from):
+            cand = Path(out_dir).resolve().parent / name / "best.keras"
+            if cand.exists():
+                print(f"Params Student: warm-start từ {cand}")
+                model.set_weights(tf.keras.models.load_model(cand, compile=False).get_weights())
+                break
+    total = max(1, cfg["epochs"] * steps_per_epoch)
     warm = min(cfg["warmup_epochs"], cfg["epochs"] // 4) * steps_per_epoch     # chạy thử ít epoch -> warmup ngắn lại
     # Learning rate: tăng dần trong vài epoch đầu (warmup – tránh "sốc" khi trọng số còn ngẫu nhiên),
     # sau đó giảm theo hình cos về ~0 ở epoch cuối (bước nhỏ dần để "tinh chỉnh").
-    lr = tf.keras.optimizers.schedules.CosineDecay(cfg["lr"] * 0.01, total - warm, alpha=0.01,
+    lr = tf.keras.optimizers.schedules.CosineDecay(cfg["lr"] * 0.01, max(1, total - warm), alpha=0.01,
                                                    warmup_target=cfg["lr"], warmup_steps=warm)
     opt = tf.keras.optimizers.AdamW(lr, weight_decay=cfg["weight_decay"])
     opt.exclude_from_weight_decay(var_names=["bn", "bias"])    # không "co" BatchNorm và bias về 0
     loss = {"head_hm": heatmap_focal_loss, "head_box": box_l1_loss}
     weights = {"head_hm": 1.0, "head_box": cfg["box_weight"]}
+    extra_outs = []
     pen = cfg["act_penalty"]
     if pen:
         # Model train = model detect + thêm output là các activation cần phạt (dùng chung trọng số).
         # Khi lưu best.keras / xuất INT8 chỉ lấy 2 output đầu (xem detector_of) -> file nộp không đổi.
         assert cfg["backbone"] == "mnv3s", "act_penalty chỉ dành cho backbone mnv3s"
         names = penalty_layers(model)
-        model = tf.keras.Model(model.input, list(model.outputs) + [model.get_layer(n).output for n in names],
-                               name=model.name)
+        extra_outs += [model.get_layer(n).output for n in names]
         for n in names:
             loss[n] = ActRangePenalty(pen["threshold"])
             weights[n] = pen["weight"]
         print(f"act_penalty: {len(names)} lớp, threshold={pen['threshold']}, weight={pen['weight']}")
+    kd = cfg.get("kd")
+    if kd and teacher is not None:
+        L = tf.keras.layers
+        teacher._name = "teacher_detector"
+        teacher.trainable = False
+        hm_t, box_t = teacher(model.input, training=False)
+        kd_hm = L.Concatenate(axis=-1, name="kd_hm")([model.outputs[0], hm_t])
+        kd_box = L.Concatenate(axis=-1, name="kd_box")([model.outputs[1], box_t, hm_t])
+        extra_outs += [kd_hm, kd_box]
+        loss["kd_hm"] = KDHmLoss()
+        loss["kd_box"] = KDBoxLoss()
+        weights["kd_hm"] = float(kd.get("hm_weight", 1.5))
+        weights["kd_box"] = float(kd.get("box_weight", 0.5))
+        print(f"Params KD Teacher ({kd.get('teacher_backbone', 'mnv3l')}): {teacher.count_params():,} "
+              f"(hm_weight={weights['kd_hm']}, box_weight={weights['kd_box']})")
+    if extra_outs:
+        model = tf.keras.Model(model.input, list(model.outputs) + extra_outs, name=model.name)
     model.compile(opt, loss=loss, loss_weights=weights,
                   jit_compile=False)   # XLA trên GPU không có đạo hàm của RESIZE_NEAREST_NEIGHBOR (lỗi thật trên Colab T4)
     return model
@@ -171,6 +199,91 @@ class ValMap(tf.keras.callbacks.Callback):
         logs["val_map50"] = self.last                 # ghi vào log.csv (nan ở epoch không đo)
 
 
+def ensure_teacher(cfg, train_items, val_items, out_dir, epochs_override=None):
+    """Đảm bảo đã có checkpoint Teacher FP32 (best.keras) trong <drive>/teachers/ trước khi chưng cất sang Student."""
+    kd = cfg.get("kd")
+    if not kd:
+        return None
+    t_bb = kd.get("teacher_backbone", "mnv3l")
+    h, w = cfg["input_hw"]
+    is_full = bool(cfg.get("full_train", False))
+    t_root = Path(out_dir).resolve().parents[1] / "teachers"
+    t_dir = t_root / f"teacher_{t_bb}_{h}x{w}_{'full' if is_full else 'val'}"
+    t_best = t_dir / "best.keras"
+    t_done = t_dir / "done.json"
+    if t_done.exists() and t_best.exists():
+        print(f"Params Teacher ({t_bb}): nạp sẵn từ {t_best}")
+        return tf.keras.models.load_model(t_best, compile=False)
+
+    t_dir.mkdir(parents=True, exist_ok=True)
+    t_epochs = epochs_override or int(kd.get("teacher_epochs", 25 if is_full else 55))
+    t_cfg = {
+        **DEFAULTS,
+        "backbone": t_bb,
+        "pretrained": bool(cfg.get("pretrained", True)),
+        "decoupled_head": True,
+        "input_hw": (h, w),
+        "neck_c": int(kd.get("teacher_neck_c", 160)),
+        "head_c": int(kd.get("teacher_head_c", 160)),
+        "epochs": t_epochs,
+        "batch": cfg["batch"],
+        "lr": float(kd.get("teacher_lr", 8e-4 if is_full else 2e-3)),
+        "box_weight": cfg["box_weight"],
+        "neighbor_weight": cfg.get("neighbor_weight", 0.25),
+        "ema_decay": 0.85,
+        "close_mosaic": min(10, max(1, t_epochs // 4)),
+        "full_train": is_full,
+        "aug": cfg.get("aug", {}),
+        "act_penalty": None,
+        "kd": None,
+    }
+    bs = min(t_cfg["batch"], len(train_items))
+    steps = max(1, len(train_items) // bs)
+    t_init_ep, t_log = 0, t_dir / "log.csv"
+    if (t_dir / "last.keras").exists() and t_log.exists():
+        t_model = tf.keras.models.load_model(t_dir / "last.keras", custom_objects=CUSTOM_OBJECTS)
+        with open(t_log, encoding="utf-8") as f:
+            t_init_ep = max(0, sum(1 for l in f if l.strip()) - 1)
+        print(f"Train tiếp Teacher ({t_bb}) từ epoch {t_init_ep}/{t_epochs}")
+    else:
+        t_model = build_and_compile(t_cfg, steps)
+        val_teacher_best = t_root / f"teacher_{t_bb}_{h}x{w}_val" / "best.keras"
+        if is_full and val_teacher_best.exists():
+            print(f"Params Teacher ({t_bb}): warm-start từ {val_teacher_best} ({t_epochs} epoch full data)")
+            t_model.set_weights(tf.keras.models.load_model(val_teacher_best, compile=False).get_weights())
+        else:
+            print(f"Params Teacher ({t_bb}): {t_model.count_params():,} -> bắt đầu train Teacher ({t_epochs} epoch)")
+
+    ds_t = make_dataset(train_items, (h, w), bs, training=True, aug=t_cfg["aug"],
+                        neighbor_weight=t_cfg["neighbor_weight"])
+    vm_t = ValMap(val_items, (h, w), t_dir, cfg["eval_every"], detector_of(t_model),
+                  ema_decay=t_cfg["ema_decay"], full_train=is_full)
+    if t_init_ep and (t_dir / "best.json").exists():
+        vm_t.best = json.loads((t_dir / "best.json").read_text())["val_map50"]
+
+    class SaveTBest(tf.keras.callbacks.Callback):
+        def on_epoch_end(self, epoch, logs=None):
+            (t_dir / "best.json").write_text(json.dumps({"val_map50": vm_t.best}))
+
+    t_cbs = [vm_t, SaveTBest(), tf.keras.callbacks.ModelCheckpoint(t_dir / "last.keras"),
+             tf.keras.callbacks.CSVLogger(t_log, append=True)]
+    close_m = int(t_cfg["close_mosaic"])
+    split_ep = t_epochs - close_m
+    if t_cfg.get("aug", {}).get("mosaic", 0.0) > 0 and 0 < close_m < t_epochs:
+        if t_init_ep < split_ep:
+            t_model.fit(ds_t, epochs=split_ep, initial_epoch=t_init_ep, verbose=2, callbacks=t_cbs)
+            t_init_ep = split_ep
+        clean_aug = {**t_cfg.get("aug", {}), "mosaic": 0.0}
+        ds_clean = make_dataset(train_items, (h, w), bs, training=True, aug=clean_aug,
+                                neighbor_weight=t_cfg["neighbor_weight"])
+        t_model.fit(ds_clean, epochs=t_epochs, initial_epoch=t_init_ep, verbose=2, callbacks=t_cbs)
+    else:
+        t_model.fit(ds_t, epochs=t_epochs, initial_epoch=t_init_ep, verbose=2, callbacks=t_cbs)
+    t_done.write_text(json.dumps({"val_map50": vm_t.best, "epochs": t_epochs}), encoding="utf-8")
+    print(f"Xong Teacher. mAP50 val tốt nhất = {vm_t.best:.4f} -> {t_best}")
+    return tf.keras.models.load_model(t_best, compile=False)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
@@ -196,19 +309,24 @@ def main(argv=None):
     hw, bs = cfg["input_hw"], min(cfg["batch"], len(train_items))
     ds_train = make_dataset(train_items, hw, bs, training=True, aug=cfg["aug"],
                             neighbor_weight=cfg.get("neighbor_weight", 0.25))
-    steps = len(train_items) // bs
+    steps = max(1, len(train_items) // bs)
+    teacher = ensure_teacher(cfg, train_items, val_items, out, epochs_override=a.epochs)
 
     # Train tiếp nếu đã có last.keras (Colab hay ngắt phiên giữa chừng)
     initial_epoch, log_path = 0, out / "log.csv"
     if (out / "last.keras").exists() and log_path.exists():
-        model = tf.keras.models.load_model(out / "last.keras", custom_objects=CUSTOM_OBJECTS)
+        try:
+            model = tf.keras.models.load_model(out / "last.keras", custom_objects=CUSTOM_OBJECTS)
+        except Exception:
+            model = build_and_compile(cfg, steps, teacher=teacher, out_dir=out)
+            model.load_weights(out / "last.keras")
         with open(log_path, encoding="utf-8") as f:
             initial_epoch = max(0, sum(1 for l in f if l.strip()) - 1)   # bỏ dòng trống (CSVLogger trên Windows)
         print(f"Train tiếp từ epoch {initial_epoch}")
     else:
-        model = build_and_compile(cfg, steps)
-        print(f"Params: {model.count_params():,}  (giới hạn 200,000)")
-    assert model.count_params() <= 200_000
+        model = build_and_compile(cfg, steps, teacher=teacher, out_dir=out)
+        print(f"Params: {detector_of(model).count_params():,}  (giới hạn 200,000)")
+    assert detector_of(model).count_params() <= 200_000
     ds_train = add_dummy_targets(ds_train, model)
 
     vm = ValMap(val_items, hw, out, cfg["eval_every"], detector_of(model),
