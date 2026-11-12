@@ -17,6 +17,8 @@
 | 7   | `h1p_pen_192x256_e120` (Drive) | So với #5 chỉ đổi **120 epoch**                                                                               | 120   | 0,9398 (+1,9)               | 0,9184 (+1,3)               | chưa nộp | INT8 mất 2,1 điểm. Giai đoạn đầu còn dao động mạnh hơn #5: mAP rơi xuống 0,08 ở khoảng epoch 14, vì learning rate cao kéo dài hơn. Đường cong đi ngang ở 0,939–0,940 trong 10 epoch cuối.                                                                                                                                                         |
 | 8   | `h1p_pen_240x320_e120` (Drive) | So với #6 chỉ đổi **120 epoch**                                                                               | 120   | **0,9542** (+0,8, cao nhất) | 0,9181 (−0,4)               | chưa nộp | **INT8 mất 3,6 điểm**, nên điểm thật thấp hơn #6. AP INT8: bottle 0,96 · cup 0,95 · phone 0,92 · **book 0,88** · mouse 0,89 · **box 0,93** · toy_car 0,89. Nhầm book → box tăng lên 26 lần (#6: 14). mAP val kẹt ở 0,22–0,33 từ epoch 7 đến khoảng 37. Range lớn nhất lại nhỏ hơn #6 (stem 127 so với 179).                              |
 | 9   | `h1p_pen_240x320_bw2` (Drive)  | So với #6 chỉ đổi **`box_weight` 1 → 2**                                                                      | 80    | 0,9415 (−0,45)              | **0,9257** (+0,4)           | chưa nộp | **INT8 tốt nhất hiện tại**, chỉ mất 1,6 điểm. AP INT8: bottle 0,95 · cup 0,95 · phone 0,92 · book 0,91 · mouse 0,89 · box 0,96 · toy_car 0,90. "Box lệch" giảm từ +2,8 xuống +2,5; recall vật lớn 0,96 → 0,98. Chênh 0,4 điểm so với #6 có thể chỉ là nhiễu, vì chưa đo độ dao động giữa các lần train.                                       |
+| 10  | `h1p_pen_240x320_bw2_r2` (Drive) | **Y hệt #9**, train lại để đo nhiễu                                                                       | 80    | 0,9360 (−0,55 so với #9)    | 0,9025 (**−2,3** so với #9) | chưa nộp | **INT8 mất 3,35 điểm, trong khi #9 cùng config chỉ mất 1,6.** AP INT8: bottle 0,92 · cup 0,94 · phone 0,89 · book 0,88 · mouse 0,87 · box 0,96 · toy_car 0,86. Range lớn nhất tương tự #9 (180 so với 192). Submission đã ghép intent thật.                                                                                                |
+| 11  | `h1p_pen_240x320_bw3` (Drive)  | So với #9 chỉ đổi `box_weight` 2 → 3                                                                          | 80    | 0,9313                      | 0,9200                      | chưa nộp | INT8 chỉ mất 1,1 điểm (thấp nhất trong các bản H1-P). "Box lệch" +2,7, "nhầm lớp" +2,5. Không phân biệt được với #9/#10 vì nằm trong mức nhiễu. Submission đã ghép intent thật.                                                                                                                                                              |
 
 ## Nhận xét từ baseline #0
 
@@ -124,6 +126,23 @@ Lệnh `debug_int8.py` chạy với 200 ảnh train để chọn scale và 32 �
 - **Ở cả 3 lần, model tốt nhất là epoch cuối cùng.** Vậy khi train lại trên train+val (không còn val để chọn checkpoint), chỉ cần lấy epoch cuối.
 - Giai đoạn đầu vẫn dao động mạnh: #8 kẹt ở 0,22–0,33 trong khoảng 30 epoch, #9 kẹt ở 0,18–0,30 trong khoảng 20 epoch.
 
+## Nhận xét #10 và #11: đo được nhiễu, và nó lớn
+
+| | #9 | #10 (y hệt #9) | Chênh |
+|---|---|---|---|
+| FP32 | 0,9415 | 0,9360 | 0,55 |
+| INT8 | 0,9257 | 0,9025 | **2,3** |
+| INT8 mất | 1,6 | 3,35 | 1,75 |
+
+- **Mức INT8 bị mất phụ thuộc vào "may rủi" của từng lần train**: cùng một config mà lúc mất 1,6, lúc mất 3,35. FP32 thì ổn định hơn nhiều (lệch khoảng 0,5).
+- Calibration không phải nguồn dao động giữa hai lần train: cả hai dùng đúng 200 ảnh như nhau (`rng(0)` trong `export_int8.py`). Vậy khác biệt nằm ở trọng số.
+- **Hệ quả: phải rút lại vài kết luận trước.**
+  - #6, #8, #9, #10, #11 (INT8 0,9025–0,9257) **không phân biệt được với nhau**. "box_weight 2 tốt hơn" chưa được chứng minh.
+  - Kết luận "train lâu làm INT8 mất nhiều hơn" (Nhận xét #8) **không còn đứng vững**: #8 mất 3,6, chỉ hơi cao hơn mức 3,35 mà #10 mất do may rủi.
+  - FP32 của #8 (0,954) cao hơn các bản 80 epoch 0,8–1,4 điểm, lớn hơn nhiễu FP32 (khoảng 0,5), nên 120 epoch **có lẽ thật sự giúp FP32**.
+- **Đòn bẩy lớn nhất bây giờ là làm INT8 mất ít và ổn định.** Nếu #8 chỉ mất 1,1 như #11, nó sẽ đạt khoảng 0,94.
+- Bước tiếp: `int8_probe.py` chạy cho cả 5 bản 240×320 (không train lại), để xem phần mất nằm ở heatmap hay box, và có phụ thuộc ảnh calibration không.
+
 ## Phần intent (TextCNN) – 30% điểm
 
 Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắt [TĐ] ngày 2026-11-11:
@@ -145,9 +164,8 @@ Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắ
 3b. ~~#5 `h1p_pen_192x256`~~. Đã xong: INT8 0,9050, tốt nhất hiện tại.
 3c. ~~#6 `h1p_pen_240x320` (INT8 0,9217) và #7 `h1p_pen_192x256_e120` (INT8 0,9184)~~. Cả hai đã xong và đều thắng #5.
 3d. ~~#8 `h1p_pen_240x320_e120` (INT8 0,9181) và #9 `h1p_pen_240x320_bw2` (INT8 0,9257)~~. Cả hai đã xong; #9 là tốt nhất hiện tại. Không train dài hơn 80 epoch nữa, vì INT8 mất nhiều hơn.
-3f. **Đang xếp hàng** (`configs/queue.json`):
-   - #10 `h1p_pen_240x320_bw2_r2`: config **y hệt #9**. Mục đích là đo mức nhiễu giữa hai lần train. Nếu #10 lệch #9 cỡ 0,4 điểm thì các chênh lệch cỡ đó từ trước tới giờ chưa nói lên được gì. Khoảng 35 phút.
-   - #11 `h1p_pen_240x320_bw3`: so với #9 chỉ đổi `box_weight` 2 → 3, để xem hướng này còn tăng được không. Khoảng 35 phút.
+3f. ~~#10 `h1p_pen_240x320_bw2_r2` (INT8 0,9025) và #11 `h1p_pen_240x320_bw3` (INT8 0,9200)~~. Đã xong: nhiễu INT8 giữa hai lần train khoảng 2 điểm.
+3g. **Đang xếp hàng** (`configs/queue.json`): chẩn đoán `probe` cho 5 bản 240×320 đã train (#9, #10, #6, #8, #11). Không train lại; các bước đã có kết quả tự bỏ qua. Submission của #9, #6, #8 sẽ được làm lại vì file intent mới hơn.
 3e. Ý tưởng sau đó, theo kết quả phân tích lỗi:
    - Tăng dần trọng số phạt (0 → 0,01 trong khoảng 10 epoch) để bớt dao động lúc đầu. Cẩn thận: #8 cho thấy học "hiệu quả hơn" có thể làm INT8 mất nhiều hơn.
    - EMA trọng số.

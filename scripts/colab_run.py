@@ -10,9 +10,11 @@ kết quả ghi vào <drive>/experiments/<tên>/.
 Mỗi bước chỉ chạy nếu chưa có file kết quả của nó -> chạy lại bao nhiêu lần cũng được:
   train      bỏ qua nếu đã có int8_report.json; nếu bị ngắt giữa chừng, train.py tự train tiếp từ last.keras
   export     -> int8_report.json      (mAP FP32 / INT8 trên val)
-  submission -> submission.csv        (tự ghép <drive>/intent_submission.csv của nhóm TextCNN nếu có)
+  submission -> submission.csv        (tự ghép <drive>/intent_submission.csv của nhóm TextCNN nếu có;
+                                       làm lại nếu file intent mới hơn submission)
   debug      -> int8_layer_debug.csv  (range từng lớp, xem experiments.md)
   errors     -> error_analysis.txt + errors.png (phần mAP còn thiếu: box lệch / nhầm lớp / bỏ sót)
+  probe      -> int8_probe.txt        (INT8 mất ở heatmap hay box? có phụ thuộc ảnh calibration không?)
 Log đầy đủ của từng bước: <drive>/experiments/<tên>/<bước>.log
 """
 import argparse
@@ -72,10 +74,11 @@ def run_experiment(name, drive, train_extra=()):
     else:
         print("train + export: đã xong trước đó (có int8_report.json) -> bỏ qua")
 
-    if not (out / "submission.csv").exists():
+    sub, intent = out / "submission.csv", Path(drive) / "intent_submission.csv"
+    # làm lại submission nếu file intent của nhóm TextCNN mới hơn (submission cũ mang nhãn INTENT mẫu)
+    if not sub.exists() or (intent.exists() and intent.stat().st_mtime > sub.stat().st_mtime):
         args = ["-m", "edgedet.eval.make_submission", "--tflite", str(out / "model_int8.tflite"),
-                "--data", str(DATA), "--out", str(out / "submission.csv")]
-        intent = Path(drive) / "intent_submission.csv"
+                "--data", str(DATA), "--out", str(sub)]
         if intent.exists():
             args += ["--intent", str(intent)]
         run("submission", args, out / "submission.log", from_line(r"^Dự đoán"))
@@ -87,6 +90,10 @@ def run_experiment(name, drive, train_extra=()):
     if not (out / "error_analysis.txt").exists():
         run("errors", ["-m", "edgedet.eval.error_analysis", "--tflite", str(out / "model_int8.tflite"), "--data", str(DATA)],
             out / "errors.log", from_line(r"^mAP50"))
+
+    if not (out / "int8_probe.txt").exists():
+        run("probe", ["-m", "edgedet.quant.int8_probe", "--model", str(out / "best.keras"), "--data", str(DATA)],
+            out / "probe.log", re.compile(r"^(A\.|B\.|-> )|^   \S").search)   # chỉ dòng kết quả, bỏ log TF
 
 
 def summary(drive):

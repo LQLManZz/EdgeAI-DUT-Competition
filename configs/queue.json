@@ -1,4 +1,4 @@
 {
   "_note": "Thứ tự thí nghiệm mà scripts/colab_run.py sẽ chạy. Mỗi tên ứng với configs/<tên>.json. Thí nghiệm đã xong (có int8_report.json trên Drive) sẽ tự bỏ qua.",
-  "queue": ["h1p_pen_240x320_bw2_r2", "h1p_pen_240x320_bw3"]
+  "queue": ["h1p_pen_240x320_bw2", "h1p_pen_240x320_bw2_r2", "h1p_pen_240x320", "h1p_pen_240x320_e120", "h1p_pen_240x320_bw3"]
 }
