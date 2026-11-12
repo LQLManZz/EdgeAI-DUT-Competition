@@ -43,7 +43,7 @@
 | Mã | Mô tả | Params | Câu hỏi cần trả lời |
 |---|---|---|---|
 | **H1-C** | Backbone custom (bảng D4), train từ đầu | 185.307 | Có đủ tốt mà không cần pretrained? |
-| **H1-P** | MobileNetV3-Small minimalistic α=1.0 pretrained ImageNet (đến stride 16) + khối thêm `x8a`, `x16a`, `x16b` | 189.379 | Pretrained có thắng H1-C trên dataset synthesis và trên ảnh thật OV7670 không? |
+| **H1-P** | MobileNetV3-Small minimalistic α=1.0 pretrained ImageNet (đến stride 16) + khối thêm `x8a`, `x16a`, `x16b` (`decoupled_head=true`: tách nhánh conv `hm` và `box`) | 189.379 / **197.139** | Pretrained có thắng H1-C trên dataset synthesis và trên ảnh thật OV7670 không? |
 | **H2** (C/P) | Backbone như trên + head YOLO anchor (3 anchor × 12) + NMS | 187.332 / 191.404 | Anchor-based có mAP50 cao hơn CenterNet không? (anchor tính bằng k-means trên dataset) |
 
 Cả ba dùng chung neck, chung độ phân giải, chung pipeline dữ liệu, nên so sánh công bằng. Quét độ phân giải (H3) chạy sau trên biến thể thắng.

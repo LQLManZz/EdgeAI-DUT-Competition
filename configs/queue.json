@@ -1,4 +1,12 @@
 {
-  "_note": "Thứ tự thí nghiệm mà scripts/colab_run.py sẽ chạy. Mỗi tên ứng với configs/<tên>.json. Thí nghiệm đã xong (có int8_report.json trên Drive) sẽ tự bỏ qua.",
-  "queue": ["h1p_pen_240x320_bw2", "h1p_pen_240x320_bw2_r2", "h1p_pen_240x320", "h1p_pen_240x320_e120", "h1p_pen_240x320_bw3"]
+  "_note": "Thứ tự thí nghiệm mà scripts/colab_run.py sẽ chạy. 5 model đầu đã train xong trên Drive -> chỉ chạy lại submission (với decode_center mới) + int8_probe. Sau đó train h1p_v2_240x320 (val) và h1p_v2_full_240x320 (100% data).",
+  "queue": [
+    "h1p_pen_240x320_bw2",
+    "h1p_pen_240x320_bw2_r2",
+    "h1p_pen_240x320",
+    "h1p_pen_240x320_e120",
+    "h1p_pen_240x320_bw3",
+    "h1p_v2_240x320",
+    "h1p_v2_full_240x320"
+  ]
 }

@@ -100,16 +100,18 @@ def neck_pan_lite(f8, f16, c=64):
     return _cbr(x, c, 1, 1, "neck_fuse_pw")
 
 
-def head_center(x, num_classes=NUM_CLASSES, c=64):
+def head_center(x, num_classes=NUM_CLASSES, c=64, decoupled=False):
     """CenterNet head, 2 output tách riêng để mỗi output có scale INT8 riêng:
       hm  : (H/8, W/8, C)  logits heatmap (sigmoid khi decode)
       box : (H/8, W/8, 4)  [log(w/8), log(h/8), off_x, off_y] – w,h tính theo pixel input, offset trong ô (0..1)
-    Gộp chung 1 tensor sẽ buộc logits heatmap (~[-10, 10]) và kích thước box dùng chung 1 scale -> mất chính xác."""
-    x = _dw(x, 1, "head")
-    x = _cbr(x, c, 1, 1, "head_pw")
+    decoupled=True: tách riêng nhánh dw3x3+pw1x1 cho hm (phân loại) và box (căn khung), tận dụng ngân sách <=200K params.
+    """
+    xh = _dw(x, 1, "head")
+    xh = _cbr(xh, c, 1, 1, "head_pw")
+    xb = _cbr(_dw(x, 1, "head_b"), c, 1, 1, "head_b_pw") if decoupled else xh
     prior = -math.log((1 - 0.01) / 0.01)   # focal-loss prior p=0.01 cho heatmap
-    hm = L.Conv2D(num_classes, 1, name="head_hm", bias_initializer=tf.keras.initializers.Constant(prior))(x)
-    box = L.Conv2D(4, 1, name="head_box")(x)
+    hm = L.Conv2D(num_classes, 1, name="head_hm", bias_initializer=tf.keras.initializers.Constant(prior))(xh)
+    box = L.Conv2D(4, 1, name="head_box")(xb)
     return [hm, box]
 
 
@@ -121,7 +123,8 @@ def head_yolo(x, num_classes=NUM_CLASSES, c=64, anchors=3):
 
 
 def build_edgedet(backbone="custom", head="center", input_hw=(128, 160), num_classes=NUM_CLASSES,
-                  neck_c=80, head_c=80, pretrained=False, blocks=CUSTOM_BLOCKS, mnv3_relu6=False):
+                  neck_c=80, head_c=80, pretrained=False, blocks=CUSTOM_BLOCKS, mnv3_relu6=False,
+                  decoupled_head=False):
     h, w = input_hw
     assert h % 16 == 0 and w % 16 == 0, "input phải chia hết cho 16 (PAN-lite stride 16 -> 8)"
     inp = L.Input((h, w, 3), name="image")
@@ -132,7 +135,7 @@ def build_edgedet(backbone="custom", head="center", input_hw=(128, 160), num_cla
     else:
         raise ValueError(backbone)
     x = neck_pan_lite(f8, f16, neck_c)
-    out = (head_center if head == "center" else head_yolo)(x, num_classes, head_c)
+    out = head_center(x, num_classes, head_c, decoupled=decoupled_head) if head == "center" else head_yolo(x, num_classes, head_c)
     name = f"edgedet_{'c' if backbone == 'custom' else 'p'}_{head}_{h}x{w}"
     return tf.keras.Model(inp, out, name=name)
 

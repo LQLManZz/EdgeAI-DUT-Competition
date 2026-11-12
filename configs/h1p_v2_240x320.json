@@ -1,0 +1,1 @@
+{"backbone": "mnv3s", "pretrained": true, "decoupled_head": true, "input_hw": [240, 320], "epochs": 100, "box_weight": 1.5, "neighbor_weight": 0.25, "ema_decay": 0.9, "aug": {"mosaic": 0.3}, "act_penalty": {"threshold": 16, "weight": 0.01}}

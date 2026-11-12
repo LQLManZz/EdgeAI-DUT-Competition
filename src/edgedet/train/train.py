@@ -71,7 +71,8 @@ def load_config(path, **override):
 
 def build_and_compile(cfg, steps_per_epoch):
     model = build_edgedet(cfg["backbone"], "center", cfg["input_hw"], neck_c=cfg["neck_c"], head_c=cfg["head_c"],
-                          pretrained=cfg["pretrained"], mnv3_relu6=cfg["mnv3_relu6"])
+                          pretrained=cfg["pretrained"], mnv3_relu6=cfg["mnv3_relu6"],
+                          decoupled_head=cfg.get("decoupled_head", False))
     total = cfg["epochs"] * steps_per_epoch
     warm = min(cfg["warmup_epochs"], cfg["epochs"] // 4) * steps_per_epoch     # chạy thử ít epoch -> warmup ngắn lại
     # Learning rate: tăng dần trong vài epoch đầu (warmup – tránh "sốc" khi trọng số còn ngẫu nhiên),

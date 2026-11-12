@@ -83,3 +83,19 @@ def test_neighbor_box_supervision_recovers_shifted_peak():
     logits[iy, ix + 1, 2] = 8.0                 # giả sử đỉnh rơi vào ô bên cạnh (iy, ix+1)
     dets = decode_center(logits, box_t[..., :4], input_hw, orig, score_thr=0.5)
     assert len(dets) == 1 and iou(dets[0]["bbox"], gt[0]) > 0.99
+
+
+def test_decoupled_head_and_mosaic():
+    from edgedet.data.dataset import _mosaic4_np
+    from edgedet.models.edgedet import build_edgedet
+    m = build_edgedet("mnv3s", "center", (240, 320), neck_c=80, head_c=80, pretrained=False, decoupled_head=True)
+    assert m.count_params() == 197_139 <= 200_000
+
+    imgs = np.zeros((4, 144, 192, 3), np.float32)
+    boxes = np.zeros((4, 32, 4), np.float32)
+    classes = -np.ones((4, 32), np.int32)
+    for i in range(4):
+        boxes[i, 0] = [60, 40, 120, 100]        # nằm ở vùng trung tâm -> phải còn lại sau khi ghép 4 góc
+        classes[i, 0] = i
+    im_m, b_m, c_m = _mosaic4_np(imgs, boxes, classes, 144, 192, prob=1.0, min_vis=0.4)
+    assert im_m.shape == (4, 144, 192, 3) and (c_m[0] >= 0).sum() == 4

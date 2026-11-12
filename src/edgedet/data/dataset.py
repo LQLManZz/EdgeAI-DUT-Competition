@@ -105,7 +105,7 @@ def _pad(items):
 # ---------------------------------------------------------------- augmentation
 
 DEFAULT_AUG = {"zoom": [0.7, 1.3], "flip": 0.5, "brightness": 0.15, "contrast": [0.7, 1.3],
-               "saturation": [0.6, 1.4], "hue": 0.03, "noise": 0.03, "min_visible": 0.4}
+               "saturation": [0.6, 1.4], "hue": 0.03, "noise": 0.03, "min_visible": 0.4, "mosaic": 0.0}
 
 
 def _augment(img, boxes, classes, input_hw, aug):
@@ -149,6 +149,52 @@ def _augment(img, boxes, classes, input_hw, aug):
 
 # ---------------------------------------------------------------- tf.data
 
+def _mosaic4_np(imgs, boxes, classes, h_in, w_in, prob, min_vis):
+    """Ghép 4 ảnh (đã augment) thành ảnh Mosaic 2x2 với xác suất `prob`."""
+    hh, ww = h_in // 2, w_in // 2
+    y0, x0 = h_in // 4, w_in // 4
+    out_im = imgs.copy()
+    out_b = boxes.copy()
+    out_c = classes.copy()
+    quads = [(0, 0), (0, ww), (hh, 0), (hh, ww)]
+    for i in range(4):
+        if np.random.random() >= prob:
+            continue
+        canvas = np.zeros((h_in, w_in, 3), np.float32)
+        mb, mc = [], []
+        for q, (qy, qx) in enumerate(quads):
+            j = (i + q) % 4
+            canvas[qy:qy + hh, qx:qx + ww] = imgs[j, y0:y0 + hh, x0:x0 + ww]
+            m = classes[j] >= 0
+            if not m.any():
+                continue
+            bj, cj = boxes[j][m].copy(), classes[j][m]
+            a0 = (bj[:, 2] - bj[:, 0]) * (bj[:, 3] - bj[:, 1])
+            bj -= [x0, y0, x0, y0]
+            bj = np.clip(bj, 0.0, [ww, hh, ww, hh])
+            w1, h1 = bj[:, 2] - bj[:, 0], bj[:, 3] - bj[:, 1]
+            keep = (w1 * h1 >= min_vis * a0) & (w1 >= 2.0) & (h1 >= 2.0)
+            if keep.any():
+                mb.append(bj[keep] + [qx, qy, qx, qy])
+                mc.append(cj[keep])
+        out_im[i] = canvas
+        out_b[i].fill(0.0); out_c[i].fill(-1)
+        if mb:
+            mb = np.concatenate(mb, axis=0)[:MAX_BOXES]
+            mc = np.concatenate(mc, axis=0)[:MAX_BOXES]
+            out_b[i, :len(mb)], out_c[i, :len(mc)] = mb, mc
+    return out_im, out_b, out_c
+
+
+def _mosaic_tf(imgs, boxes, classes, input_hw, aug):
+    im, b, c = tf.numpy_function(
+        lambda im, b, c: _mosaic4_np(im, b, c, input_hw[0], input_hw[1], float(aug["mosaic"]), float(aug["min_visible"])),
+        [imgs, boxes, classes], [tf.float32, tf.float32, tf.int32])
+    im.set_shape((4, input_hw[0], input_hw[1], 3))
+    b.set_shape((4, MAX_BOXES, 4)); c.set_shape((4, MAX_BOXES))
+    return im, b, c
+
+
 def _encode_tf(x, boxes, classes, input_hw, num_classes, neighbor_weight=0.25):
     def _np(b, c):
         m = c >= 0
@@ -173,6 +219,9 @@ def make_dataset(items, input_hw, batch, training, aug=None, num_classes=7, cach
     if training:
         ds = ds.shuffle(len(items), reshuffle_each_iteration=True)
         ds = ds.map(lambda im, b, c: _augment(im, b, c, input_hw, aug), num_parallel_calls=tf.data.AUTOTUNE)
+        if aug.get("mosaic", 0.0) > 0:
+            ds = ds.batch(4, drop_remainder=True).map(
+                lambda im, b, c: _mosaic_tf(im, b, c, input_hw, aug), num_parallel_calls=tf.data.AUTOTUNE).unbatch()
     else:
         s = tf.constant([input_hw[1] / ORIG_HW[1], input_hw[0] / ORIG_HW[0]] * 2, tf.float32)
         ds = ds.map(lambda im, b, c: (preprocess(im, input_hw), b * s, c), num_parallel_calls=tf.data.AUTOTUNE)
