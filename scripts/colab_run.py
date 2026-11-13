@@ -66,17 +66,24 @@ def run_experiment(name, drive, train_extra=()):
     out.mkdir(parents=True, exist_ok=True)
     print(f"\n========== {name}   ({cfg.read_text(encoding='utf-8').strip()})", flush=True)
 
-    if not (out / "int8_report.json").exists():
+    rep_path = out / "int8_report.json"
+    refresh_stage6 = False
+    if not rep_path.exists():
         run("train", ["-m", "edgedet.train.train", "--config", str(cfg), "--data", str(DATA), "--out", str(out), *train_extra],
             out / "train.log", TRAIN_SHOW)
         run("export", ["-m", "edgedet.quant.export_int8", "--model", str(out / "best.keras"), "--data", str(DATA)],
             out / "export.log", from_line(r"^\{"))          # chỉ in phần JSON kết quả
+    elif not json.loads(rep_path.read_text(encoding="utf-8")).get("stage6_decode"):
+        print("train: đã xong trước đó -> export + đánh giá lại với decode GĐ6")
+        run("export", ["-m", "edgedet.quant.export_int8", "--model", str(out / "best.keras"), "--data", str(DATA)],
+            out / "export.log", from_line(r"^\{"))
+        refresh_stage6 = True
     else:
         print("train + export: đã xong trước đó (có int8_report.json) -> bỏ qua")
 
     sub, intent = out / "submission.csv", Path(drive) / "intent_submission.csv"
-    # làm lại submission nếu file intent của nhóm TextCNN mới hơn, hoặc chưa có int8_probe.txt (cập nhật decode mới)
-    if not sub.exists() or not (out / "int8_probe.txt").exists() or (intent.exists() and intent.stat().st_mtime > sub.stat().st_mtime):
+    # làm lại submission nếu file intent của nhóm TextCNN mới hơn, hoặc cần làm mới theo decode GĐ6
+    if refresh_stage6 or not sub.exists() or not (out / "int8_probe.txt").exists() or (intent.exists() and intent.stat().st_mtime > sub.stat().st_mtime):
         args = ["-m", "edgedet.eval.make_submission", "--tflite", str(out / "model_int8.tflite"),
                 "--data", str(DATA), "--out", str(sub)]
         if intent.exists():
@@ -87,11 +94,11 @@ def run_experiment(name, drive, train_extra=()):
         run("debug", ["-m", "edgedet.quant.debug_int8", "--model", str(out / "best.keras"), "--data", str(DATA)],
             out / "debug.log", from_line(r"lớp\. rmse/scale"))
 
-    if not (out / "error_analysis.txt").exists():
+    if refresh_stage6 or not (out / "error_analysis.txt").exists():
         run("errors", ["-m", "edgedet.eval.error_analysis", "--tflite", str(out / "model_int8.tflite"), "--data", str(DATA)],
             out / "errors.log", from_line(r"^mAP50"))
 
-    if not (out / "int8_probe.txt").exists():
+    if refresh_stage6 or not (out / "int8_probe.txt").exists():
         run("probe", ["-m", "edgedet.quant.int8_probe", "--model", str(out / "best.keras"), "--data", str(DATA)],
             out / "probe.log", re.compile(r"^(A\.|B\.|C\.|-> )|^   \S").search)   # chỉ dòng kết quả, bỏ log TF
 

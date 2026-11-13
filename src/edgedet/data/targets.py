@@ -30,8 +30,8 @@ def gaussian_radius(h, w, min_overlap=0.7):
 
 def _draw_gaussian(hm, cx, cy, radius):
     """Vẽ đồi Gauss đỉnh = 1 tại ô (cx, cy) lên kênh hm (2D). Chỗ chồng nhau thì lấy max (không cộng)."""
-    r = max(0, int(radius))
-    sigma = (2 * r + 1) / 6
+    r = max(1, int(radius)) if radius > 0 else 0
+    sigma = (2 * max(float(radius), 0.90) + 1) / 6
     ys, xs = np.ogrid[-r:r + 1, -r:r + 1]
     g = np.exp(-(xs * xs + ys * ys) / (2 * sigma * sigma))
     H, W = hm.shape
@@ -64,9 +64,10 @@ def encode(boxes, classes, input_hw, num_classes=7, neighbor_weight=0.25):
         _draw_gaussian(hm[:, :, int(k)], ix, iy, rad)
         lw, lh = np.log(w / STRIDE), np.log(h / STRIDE)
         box_t[iy, ix] = [lw, lh, cx - ix, cy - iy, 1.0]
-        if neighbor_weight > 0 and int(rad) >= 1:
+        if neighbor_weight > 0 and rad > 0:
+            nb_w = neighbor_weight * min(1.0, max(0.5, float(rad)))
             for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                 ny, nx = iy + dy, ix + dx
-                if 0 <= ny < hf and 0 <= nx < wf and box_t[ny, nx, 4] < neighbor_weight:
-                    box_t[ny, nx] = [lw, lh, cx - nx, cy - ny, neighbor_weight]
+                if 0 <= ny < hf and 0 <= nx < wf and box_t[ny, nx, 4] < nb_w:
+                    box_t[ny, nx] = [lw, lh, cx - nx, cy - ny, nb_w]
     return hm, box_t

@@ -71,7 +71,9 @@ def main(argv=None):
         best_calib = {"seed": 0, "n_rep": int(n_rep)}
     else:
         m32, _, _ = evaluate(keras_predict_fn(model), val_items, hw)
-        cands = [(0, min(200, len(train_items))), (1, min(200, len(train_items))), (2, min(500, len(train_items)))]
+        cands = [(0, min(200, len(train_items))), (1, min(200, len(train_items))),
+                 (2, min(500, len(train_items))), (3, min(300, len(train_items))),
+                 (4, min(150, len(train_items)))]
         best_m8, best_per8, best_blob, best_calib = -1.0, {}, None, {}
         for seed, n_rep in cands:
             idx = np.random.default_rng(seed).choice(len(train_items), n_rep, replace=False)
@@ -86,7 +88,7 @@ def main(argv=None):
 
     ops = op_names(out)
     rep = {"tflite": str(out), "input_hw": list(hw), "params_keras": int(model.count_params()),
-           "file_bytes": out.stat().st_size, "ops": ops, "best_calib": best_calib}
+           "file_bytes": out.stat().st_size, "ops": ops, "best_calib": best_calib, "stage6_decode": True}
     rep["checks"] = {
         "params<=200K": rep["params_keras"] <= LIMITS["params"],
         "file<=1.5MB": rep["file_bytes"] <= LIMITS["file_bytes"],

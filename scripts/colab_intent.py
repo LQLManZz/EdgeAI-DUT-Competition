@@ -82,6 +82,26 @@ def summary(drive, use):
           f" -> {Path(drive) / 'intent_submission.csv'}")
 
     intent = pd.read_csv(src, dtype=str).set_index("sample_id")["prediction"]
+    # So sánh dự đoán trên 4.000 câu test giữa các model đã xong với `best`
+    other_subs = {}
+    for r in rows:
+        p_sub = Path(drive) / "experiments_intent" / r["name"] / "intent_submission.csv"
+        if r["name"] != best and p_sub.exists():
+            other_subs[r["name"]] = pd.read_csv(p_sub, dtype=str).set_index("sample_id")["prediction"]
+    if other_subs:
+        print(f"\nĐối chiếu dự đoán trên {len(intent)} câu test so với {best}:")
+        diff_mask = pd.Series(False, index=intent.index)
+        for name, s in other_subs.items():
+            d = (s.reindex(intent.index) != intent)
+            diff_mask |= d
+            print(f"  {name:<18}: khác {int(d.sum()):>3} câu ({100.0 * (1.0 - d.mean()):.2f}% trùng)")
+        if diff_mask.any() and (DATA / "intent_test.csv").exists():
+            q_map = pd.read_csv(DATA / "intent_test.csv", dtype=str).set_index("question_id")["question"]
+            print(f"  Mẫu câu bất đồng (tối đa 10/{int(diff_mask.sum())}):")
+            for qid in intent.index[diff_mask][:10]:
+                picks = ", ".join([f"{best}={intent[qid]}"] + [f"{n}={s.get(qid, '?')}" for n, s in other_subs.items()])
+                print(f"    [{qid}] {q_map.get(qid, '')}  -> {picks}")
+
     for det in sorted((Path(drive) / "experiments").glob("*/submission.csv")):
         sub = pd.read_csv(det, dtype=str, keep_default_na=False)
         m = sub.task_type == "INTENT"

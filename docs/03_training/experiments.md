@@ -20,11 +20,13 @@
 | 10  | `h1p_pen_240x320_bw2_r2` (Drive) | **Y hệt #9**, train lại để đo nhiễu                                                                       | 80    | 0,9360 (−0,55 so với #9)    | 0,9025 → **0,9087** (decode mới) | chưa nộp | Decode mới kéo INT8 tăng **+0,62 điểm** (0,9025 → 0,9087; calib seed 1 đạt 0,9096). Phần mất nằm ở `hm8` (đỉnh FP32 0,850 tụt xuống 0,681).                                                                                                                                                                                                    |
 | 11  | `h1p_pen_240x320_bw3` (Drive)  | So với #9 chỉ đổi `box_weight` 2 → 3                                                                          | 80    | 0,9313                      | 0,9200 → **0,9230** (decode mới) | chưa nộp | Decode mới tăng **+0,30 điểm** (0,9200 → 0,9230). Nhánh `box8` chỉ mất 0,09 điểm (`hm32+box8` = 0,9308).                                                                                                                                                                                                                                      |
 | 12  | `h1p_v2_240x320` (Drive)       | GĐ2+3: Decoupled Head (**197.139 params**) + GIoU + 3×3 neighbor box + logit clip + EMA + Mosaic 0,3          | 100   | **0,9475**                  | **0,9277** (**0,9308** với 500 ảnh calib) | chưa nộp | **Tốt nhất trên tập val độc lập.** AP INT8: bottle 0,95 · cup 0,96 · phone 0,91 · book 0,91 · mouse 0,89 · **box 0,981** · toy_car 0,90. Nhầm `book → box` giảm từ 14–26 xuống còn **8 lần**. Nhánh `box8` chỉ mất 0,23 điểm (`hm32+box8` = 0,9452). Nhược điểm: 40 epoch đầu dao động ở 0,21–0,48 do `act_penalty` bậc 2 + Mosaic bật suốt 100 epoch. |
-| 13  | `h1p_v2_full_240x320` (Drive)  | Y hệt #12 nhưng **`full_train: true` (train trên 100% = 6.000 ảnh)**                                          | 100   | *0,9542* (gồm val)          | *0,9442* (**chỉ mất 1,01 điểm INT8**) | **ưu tiên nộp** | Train trên toàn bộ 6.000 ảnh để nộp Kaggle. Mức mất INT8 giảm còn **1,01 điểm** (`hm32+box8` mất 0,25; `hm8+box32` mất 0,79). Đã xuất `submission.csv` (141.068 box = 35,3 box/ảnh, gọn nhất từ trước tới nay).                                                                                                                               |
+| 13  | `h1p_v2_full_240x320` (Drive)  | Y hệt #12 nhưng **`full_train: true` (train trên 100% = 6.000 ảnh)**                                          | 100   | *0,9542* (gồm val)          | *0,9442* (**chỉ mất 1,01 điểm INT8**) | **ưu tiên nộp #2** | Train trên toàn bộ 6.000 ảnh để nộp Kaggle. Mức mất INT8 giảm còn **1,01 điểm** (`hm32+box8` mất 0,25; `hm8+box32` mất 0,79). Đã xuất `submission.csv` (141.068 box = 35,3 box/ảnh, gọn nhất từ trước tới nay).                                                                                                                               |
 | 14  | `h1p_v3_240x320` (Drive)       | So với #12: Huber `ActRangePenalty` (delta 8) + phạt 40 lớp + `close_mosaic: 15`                              | 100   | **0,9475**                  | 0,9122 (mất 3,53)           | chưa nộp | Hội tụ rất nhanh (epoch 20 đã đạt 0,856, xóa bỏ 40 epoch dao động). Nhưng Huber tuyến tính ở `x > 8` làm đạo hàm phạt yếu đi 23 lần ở activation lớn (`expanded_conv_project_bn` range vọt lên 252,5), khiến `hm8` mất 3,1 điểm và nhầm `book → box` tăng lên 46 lần.                                                                             |
-| 15  | `h1p_v3_full_240x320` (Drive)  | Y hệt #14 nhưng **`full_train: true` (100% = 6.000 ảnh)**                                                     | 100   | **0,9592** (**cao nhất**)   | *0,9342* (mất 2,49)         | **ưu tiên nộp #2** | `close_mosaic: 15` + EMA 25% cuối đưa **FP32 đạt kỷ lục 0,9592** (box 0,993 · bottle 0,981 · cup 0,979 · phone 0,946 · mouse 0,946 · book 0,937 · toy_car 0,934). INT8 đạt 0,9342 (33,4 box/ảnh) do Huber phạt nhẹ hơn bậc hai của #13.                                                                                                         |
-| 16  | `h1p_kd_240x320` (Drive)       | **GĐ5 (Teacher-Student KD + STE FakeQuant INT8):** Teacher `MobileNetV3Large` (3,3M params, 3-scale FPN + SE) chưng cất sang Student 197K + khôi phục phạt bậc hai 28 lớp + STE INT8 | 60 (warm-start #12) | đang xếp hàng | đang xếp hàng | – | Kết hợp trần FP32 của Teacher 3,3M (SE + h-swish + stride 32→16→8) với độ nén INT8 bậc hai của #12/#13 và mô phỏng lượng tử hóa 256 mức bằng Straight-Through Estimator (STE) ngay trong hàm loss.                                                                                                                                                |
-| 17  | `h1p_kd_full_240x320` (Drive)  | Y hệt #16 nhưng **`full_train: true` (100% = 6.000 ảnh, warm-start từ #16/#13)**                              | 50    | đang xếp hàng               | đang xếp hàng               | –        | Bản chốt nộp Kaggle của Giai đoạn 5 (Teacher `mnv3l` full 6.000 ảnh chưng cất sang Student 197.139 params + STE INT8 + `close_mosaic: 15`).                                                                                                                                                                                                     |
+| 15  | `h1p_v3_full_240x320` (Drive)  | Y hệt #14 nhưng **`full_train: true` (100% = 6.000 ảnh)**                                                     | 100   | **0,9592**                  | *0,9342* (mất 2,49)         | **ưu tiên nộp #3** | `close_mosaic: 15` + EMA 25% cuối đưa FP32 đạt `0,9592` (box 0,993 · bottle 0,981 · cup 0,979 · phone 0,946 · mouse 0,946 · book 0,937 · toy_car 0,934). INT8 đạt 0,9342 (33,4 box/ảnh) do Huber phạt nhẹ hơn bậc hai của #13.                                                                                                                      |
+| 16  | `h1p_kd_240x320` (Drive)       | **GĐ5 (Teacher-Student KD + STE FakeQuant INT8):** Teacher `MobileNetV3Large` (3,098,699 params, val `0,9782` EMA) chưng cất sang Student 197K + phạt bậc hai 28 lớp + STE INT8 | 60 (warm-start #12) | **0,9562** (+0,87 so với #12) | 0,9449 → **0,9459** (`box_smooth=0,35`) | chưa nộp | **Tốt nhất GĐ5 trên tập val độc lập.** AP INT8 (GĐ5): bottle 0,972 · cup 0,968 · phone 0,934 · book 0,915 · mouse 0,917 · box 0,982 · toy_car 0,926. Range lớn nhất **124,3** (`re_lu_19` 124,3 · `expanded_conv_project_bn` 124,3). Bỏ sót 0,3% (11/3775); recall vật nhỏ (<28 px) 0,872. Nếu bật `cross_nms_iou=0,85` bị tụt còn 0,9389. |
+| 17  | `h1p_kd_full_240x320` (Drive)  | Y hệt #16 nhưng **`full_train: true` (100% = 6.000 ảnh, warm-start từ #16; Teacher `mnv3l` full 25 ep đạt `0,9845`)** | 50    | **0,9641**                  | 0,9520 → **0,9546** (`box_smooth=0,35`) | **95,86** (95,86229, decode GĐ5) | **Kỷ lục Kaggle đã nộp.** Với `box_smooth=0,35` (tắt `cross_nms_iou`): `0,9546` (bottle 0,982 · cup 0,978 · phone 0,947 · book 0,920 · mouse 0,934 · box 0,981 · toy_car 0,940). Range lớn nhất **114,9**. Bỏ sót 0,2% (8/3775); recall vật nhỏ 0,878. Khi bật `cross_nms_iou=0,85` tụt còn 0,9490. |
+| **18** | **`h1p_kd_v2_240x320`** (Drive) | **GĐ6:** Sửa `targets.py` vật nhỏ + **DIoU** & ưu tiên vật nhỏ + **STE INT8 cho cả nhánh box** (`warm-start #12`, Teacher cache) | 60    | 0,9572 *(đo cùng cross-NMS)* | 0,9511 (GĐ5) → **0,9523** (`box_smooth=0,35`) | chưa nộp | **Tốt nhất trên tập val độc lập (+0,74 điểm INT8 so với #16).** AP INT8 (`box_smooth=0,35`): bottle 0,980 · cup 0,973 · phone 0,942 · book 0,922 · mouse 0,930 · **box 0,989** · toy_car 0,931. Nhánh `box8` chỉ mất **0,14** (`0,9558` vs `0,9572`); đỉnh `hm8` tăng lên `0,922`; nhầm `book → box` giảm còn **6 lần**; recall nhỏ/vừa/lớn = **0,882 / 0,972 / 0,986**; range lớn nhất `119,8`. (Với `cross_nms_iou=0,85` bị kéo xuống `0,9464`.) |
+| **19** | **`h1p_kd_v2_full_240x320`** (Drive) | Y hệt #18 nhưng **`full_train: true` (100% = 6.000 ảnh, warm-start từ #18, ưu tiên EMA)** | 50    | **0,9631** *(đo cùng cross-NMS)* | 0,9573 (GĐ5) → **0,9577** (`box_smooth=0,35`) | 95,48350 *(lúc còn lỗi cross-NMS)* · **chờ nộp bản sửa** | **Tốt nhất toàn dự án (+0,57 điểm INT8 so với #17).** AP INT8 (`box_smooth=0,35`): bottle 0,981 · cup 0,975 · **phone 0,955** · **book 0,926** · **mouse 0,937** · **box 0,986** · **toy_car 0,944**. Recall vật nhỏ tăng lên **0,894**; box lệch giảm còn **+1,65**; range lớn nhất `115,4`. Bản nộp cũ bị `cross_nms_iou=0,85` kéo mAP xuống `0,9525` (19,2 box/ảnh) nên Kaggle chỉ đạt `95,48350`; đã xuất lại `submission.csv` (105.516 box = 26,4 box/ảnh) với decode sửa + `textcnn_dual_v3`. |
 
 ## Nhận xét từ baseline #0
 
@@ -99,14 +101,14 @@ Lệnh `debug_int8.py` chạy với 200 ảnh train để chọn scale và 32 �
 
 ## Phân tích lỗi (`error_analysis.py`, INT8, val 600 ảnh) [TĐ]
 
-| | #5 192×256 | #6 240×320 | #7 192×256 e120 | #8 240×320 e120 | #9 240×320 bw2 |
-|---|---|---|---|---|---|
-| mAP50 INT8 | 0,9050 | 0,9217 | 0,9184 | 0,9181 | **0,9257** |
-| + nới IoU xuống 0,1 (**box lệch**) | +3,8 | +2,8 | +3,3 | +2,7 | +2,5 |
-| + bỏ qua lớp (**nhầm lớp**) | +2,8 | +2,7 | +2,4 | +2,7 | +2,3 |
-| Vật không có box đúng lớp nào gần (**bỏ sót**) | 0,6% | 0,4% | 0,5% | 0,3% | 0,3% |
-| Recall vật nhỏ (<28 px) / vừa / lớn, score ≥ 0,3 | 0,83 / 0,95 / 0,97 | 0,86 / 0,95 / 0,96 | 0,83 / 0,96 / 0,97 | 0,87 / 0,96 / 0,96 | 0,85 / 0,96 / 0,98 |
-| Số lần nhầm book → box | – | 14 | – | 26 | 11 |
+| | #5 192×256 | #6 240×320 | #8 e120 | #12 `h1p_v2` | #16 `h1p_kd` | #17 `h1p_kd_full` *(full)* | #18 `h1p_kd_v2` | #19 `h1p_kd_v2_full` *(full)* |
+|---|---|---|---|---|---|---|---|---|
+| mAP50 INT8 | 0,9050 | 0,9217 | 0,9181 | 0,9277 | 0,9449 | 0,9520 | **0,9523** | **0,9577** |
+| + nới IoU xuống 0,1 (**box lệch**) | +3,8 | +2,8 | +2,7 | – | +2,28 | +2,08 | **+1,85** | **+1,65** |
+| + bỏ qua lớp (**nhầm lớp**) | +2,8 | +2,7 | +2,7 | – | +2,00 | **+1,49** | +1,61 | **+1,49** |
+| Vật không có box đúng lớp nào gần (**bỏ sót**) | 0,6% | 0,4% | 0,3% | – | 0,3% (11/3775) | **0,2% (8/3775)** | **0,2% (9/3775)** | 0,3% (10/3775) |
+| Recall vật nhỏ (<28 px) / vừa / lớn, score ≥ 0,3 | 0,83 / 0,95 / 0,97 | 0,86 / 0,95 / 0,96 | 0,87 / 0,96 / 0,96 | – | 0,872 / 0,967 / 0,977 | 0,878 / **0,973** / 0,975 | 0,882 / 0,972 / **0,986** | **0,894** / 0,971 / 0,978 |
+| Số lần nhầm book → box | – | 14 | 26 | 8 | 11 | 11 | **6** | 12 |
 
 - Model hầu như không bỏ sót vật (dưới 1%). Phần còn thiếu chia đều cho **box chưa khít** (khoảng 3 điểm) và **nhầm lớp** (khoảng 2,5 điểm).
 - **Vật nhỏ là điểm yếu rõ nhất**: recall khoảng 0,85, so với khoảng 0,95 ở vật vừa và lớn. Input 240×320 giúp vật nhỏ nhiều nhất (+0,03).
@@ -152,48 +154,57 @@ Lệnh `debug_int8.py` chạy với 200 ảnh train để chọn scale và 32 �
   - Đã bổ sung vào `src/edgedet/utils/decode.py`: (1) `tie_break=True` chọn đúng 1 ô có trung bình 3×3 lớn nhất khi bằng điểm đỉnh; (2) `score_smooth=0.1` phá vỡ đồng hạng 1/256 khi xếp hạng AP toàn cục; (3) `nms_iou=0.65` lọc trùng cùng lớp cho vật lớn.
 - Bước tiếp: `int8_probe.py` chạy cho cả 5 bản 240×320 (không train lại), đo trực tiếp mức tăng mAP50 INT8 của `decode_center` mới (mục B) và tự động tạo lại `submission.csv` cho cả 5 bản.
 
-## Kết quả `int8_probe.py` và Thí nghiệm #12 (`h1p_v2`), #13 (`h1p_v2_full`) [TĐ] (2026-11-12)
+## Kết quả `int8_probe.py` và Thí nghiệm #12–#19 (`h1p_v2`, `h1p_v3`, `h1p_kd`, `h1p_kd_v2`) [TĐ] (2026-11-12 – 2026-11-13)
 
-### 1. Chẩn đoán đầu ra (`A`) & Hiệu quả của `decode_center` mới (`B`) + Calibration (`C`)
+### 1. Chẩn đoán đầu ra (`A`) & Hiệu quả của `decode_center` (`B`) + Calibration (`C`)
 
-| # | Thí nghiệm | `hm32+box32` (FP32) | `hm32+box8` (Chỉ Box INT8) | `hm8+box32` (Chỉ HM INT8) | INT8 Decode cũ | **INT8 Decode mới** (`seed 0`) | **INT8 Calib tốt nhất** (`C`) |
-|---|---|---|---|---|---|---|---|
-| 6 | `h1p_pen_240x320` | 0,9462 | 0,9436 (−0,26) | 0,9306 (−1,56) | 0,9217 | **0,9249** (+0,32) | **0,9304** (500 ảnh, seed 2) |
-| 8 | `h1p_pen_240x320_e120` | 0,9544 | 0,9500 (−0,44) | 0,9252 (−2,92) | 0,9181 | **0,9220** (+0,39) | **0,9240** (200 ảnh, seed 1) |
-| 9 | `h1p_pen_240x320_bw2` | 0,9418 | 0,9381 (−0,37) | 0,9322 (−0,96) | 0,9257 | **0,9298** (+0,41) | **0,9298** (200 ảnh, seed 0) |
-| 10 | `h1p_pen_240x320_bw2_r2` | 0,9363 | 0,9294 (−0,69) | 0,9156 (−2,07) | 0,9025 | **0,9087** (+0,62) | **0,9096** (200 ảnh, seed 1) |
-| 11 | `h1p_pen_240x320_bw3` | 0,9317 | 0,9308 (−0,09) | 0,9250 (−0,67) | 0,9200 | **0,9230** (+0,30) | **0,9230** (200 ảnh, seed 0) |
-| **12** | **`h1p_v2_240x320`** | **0,9475** | **0,9452** (−0,23) | 0,9303 (−1,72) | 0,9248 | **0,9277** (+0,29) | **0,9308** (500 ảnh, seed 2) |
-| **13** | **`h1p_v2_full_240x320`** *(100% data)* | *0,9542* | *0,9517* (−0,25) | *0,9463* (−0,79) | *0,9427* | **0,9442** (+0,15) | **0,9442** (mất đúng 1,01 điểm) |
-| 14 | `h1p_v3_240x320` | **0,9475** | 0,9410 (−0,65) | 0,9162 (−3,13) | 0,9090 | **0,9122** (+0,32) | 0,9122 (200 ảnh, seed 0) |
-| **15** | **`h1p_v3_full_240x320`** *(100% data)* | **0,9592** | **0,9543** (−0,49) | 0,9381 (−2,11) | 0,9317 | **0,9342** (+0,25) | **0,9342** (200 ảnh, seed 0/1) |
+| # | Thí nghiệm | `hm32+box32` (FP32) | `hm32+box8` (Chỉ Box INT8) | `hm8+box32` (Chỉ HM INT8) | INT8 Decode cũ | INT8 Decode GĐ5 (`bs=0`) | **INT8 Decode GĐ6 (`box_smooth=0,35`)** | Khi bật `cross_nms=0,85` *(đã tắt)* |
+|---|---|---|---|---|---|---|---|---|
+| 6 | `h1p_pen_240x320` | 0,9462 | 0,9436 (−0,26) | 0,9306 (−1,56) | 0,9217 | **0,9249** *(0,9304 seed 2)* | – | – |
+| 8 | `h1p_pen_240x320_e120` | 0,9544 | 0,9500 (−0,44) | 0,9252 (−2,92) | 0,9181 | **0,9220** *(0,9240 seed 1)* | – | – |
+| 9 | `h1p_pen_240x320_bw2` | 0,9418 | 0,9381 (−0,37) | 0,9322 (−0,96) | 0,9257 | **0,9298** | – | – |
+| 10 | `h1p_pen_240x320_bw2_r2` | 0,9363 | 0,9294 (−0,69) | 0,9156 (−2,07) | 0,9025 | **0,9087** *(0,9096 seed 1)* | – | – |
+| 11 | `h1p_pen_240x320_bw3` | 0,9317 | 0,9308 (−0,09) | 0,9250 (−0,67) | 0,9200 | **0,9230** | – | – |
+| **12** | **`h1p_v2_240x320`** | **0,9475** | **0,9452** (−0,23) | 0,9303 (−1,72) | 0,9248 | **0,9277** *(0,9308 seed 2)* | – | – |
+| **13** | **`h1p_v2_full_240x320`** *(100% data)* | *0,9542* | *0,9517* (−0,25) | *0,9463* (−0,79) | *0,9427* | **0,9442** | – | – |
+| 14 | `h1p_v3_240x320` | **0,9475** | 0,9410 (−0,65) | 0,9162 (−3,13) | 0,9090 | **0,9122** | – | – |
+| **15** | **`h1p_v3_full_240x320`** *(100% data)* | **0,9592** | **0,9543** (−0,49) | 0,9381 (−2,11) | 0,9317 | **0,9342** | – | – |
+| **16** | **`h1p_kd_240x320`** | 0,9562 *(GĐ5)* | 0,9536 (−0,26) | 0,9479 (−0,83) | 0,9421 | **0,9443** *(GĐ5)* | **0,9459** (+0,16) | 0,9389 (−0,70) |
+| **17** | **`h1p_kd_full_240x320`** *(100% data)* | 0,9641 *(GĐ5)* | 0,9615 (−0,26) | 0,9545 (−0,96) | 0,9497 | **0,9520** *(GĐ5)* | **0,9546** (+0,26) | 0,9490 (−0,56) |
+| **18** | **`h1p_kd_v2_240x320`** | 0,9572 *(cross-NMS)* | **0,9558** (−0,14) | **0,9475** | 0,9487 | **0,9511** (+0,68 so với #16) | **0,9523** (+0,64 so với #16) | 0,9464 (−0,59) |
+| **19** | **`h1p_kd_v2_full_240x320`** *(100% data)* | 0,9631 *(cross-NMS)* | **0,9610** (−0,21) | **0,9546** | 0,9557 | **0,9573** (+0,53 so với #17) | **0,9577** (+0,31 so với #17) | 0,9525 (−0,52) |
+
+*(Ghi chú: dòng A cho #16/#17 lấy từ lần probe GĐ5; dòng A cho #18/#19 đo trên Colab trước khi tắt `cross_nms_iou`, trong đó nhánh `box8` chỉ còn mất 0,14–0,21 điểm và các đỉnh `hm32 > 0,3` tăng từ `0,845–0,861` lên `0,914–0,922`.)*
 
 ### 2. Bốn kết luận kỹ thuật quan trọng từ số liệu trên
 
-1. **`decode_center` mới (Giai đoạn 1) tăng điểm trên MỌI model (+0,29 đến +0,62 điểm mAP INT8):**
-   - Riêng `tie_break 3x3` đóng góp +0,23 đến +0,55 điểm; `score_smooth 3x3` đóng góp thêm +0,04 đến +0,07 điểm.
-   - Bản #9 tăng từ `0,9257` lên **`0,9298`**; bản #6 (với 500 ảnh calib) tăng từ `0,9217` lên **`0,9304`**.
+1. **`decode_center` mới (Giai đoạn 1) tăng điểm trên MỌI model (+0,23 đến +0,62 điểm mAP INT8):**
+   - Riêng `tie_break 3x3` đóng góp +0,20 đến +0,55 điểm; `score_smooth 3x3` đóng góp thêm +0,03 đến +0,07 điểm.
+   - Bản #9 tăng từ `0,9257` lên **`0,9298`**; bản #6 (với 500 ảnh calib) tăng từ `0,9217` lên **`0,9304`**; bản #17 tăng từ `0,9497` lên **`0,9520`**.
 2. **85%–90% toàn bộ hao hụt INT8 nằm ở `hm8` (nhánh `box8` chỉ mất 0,09–0,26 điểm):**
-   - Với GIoU + giám sát 4 ô sát tâm + Decoupled Head ở #12, nhánh `box8` (`hm32+box8`) đạt **`0,9452`** (chỉ mất 0,23 điểm so với FP32!).
-   - Ngược lại, `hm8` (`hm8+box32`) mất 1,5–2,9 điểm vì tại các đỉnh vật thật (`hm32 > 0.3`), điểm trung bình bị kéo tụt từ `0,934` xuống `0,792` và sai số `|hm8 - hm32|` ở p99 lên tới `2,32` logit.
+   - Với GIoU + giám sát 4 ô sát tâm + Decoupled Head ở #12/#16/#17, nhánh `box8` (`hm32+box8`) chỉ mất **0,23–0,26 điểm** so với FP32 (`0,9615` so với `0,9641` ở #17).
+   - Ở các bản trước KD (#12, #14), `hm8` (`hm8+box32`) mất 1,72–3,13 điểm vì tại các đỉnh vật thật (`hm32 > 0.3`), điểm trung bình bị kéo tụt từ `0,934` xuống `0,792` và sai số `|hm8 - hm32|` ở p99 lên tới `2,32` logit.
 3. **Chọn tập ảnh Calibration (`export_int8.py`) lệch nhau tới 0,55 điểm mAP INT8:**
    - Do TFLite PTQ lấy `min/max` tuyệt đối trên tập đại diện, chỉ cần 1 ảnh có ngoại lai cũng làm giãn `scale`. Ở #6 và #12, dùng `(500 ảnh, seed 2)` giúp tăng ngay **+0,55** và **+0,31** điểm mAP INT8 (đưa #12 lên **0,9308**, vượt mốc 0,930 trên val!).
-   - **Giải pháp:** Cập nhật `export_int8.py` tự động thử 3 tập calibration `[(0, 200), (1, 200), (2, 500)]` và lưu bản `.tflite` có mAP INT8 cao nhất.
-4. **Bài học từ #14 & #15 (`h1p_v3`) và quyết định chuyển sang Giai đoạn 5 (Teacher-Student KD + STE INT8 FakeQuant):**
-   - **Điểm cộng lớn của #14 & #15:** `close_mosaic = 15` và EMA 25% cuối giúp **FP32 đạt kỷ lục mới `0,9592`** ở #15 (mọi lớp đều từ `0,934` đến `0,993`), đồng thời xóa bỏ hoàn toàn 40 epoch đầu bị dao động (epoch 20 đã đạt `0,856`).
-   - **Vì sao INT8 của #14/#15 mất nhiều hơn #12/#13 (`2,49–3,53` điểm so với `1,01` điểm của #13)?**
-     - Khi đổi `ActRangePenalty` từ bậc hai `x^2` sang tuyến tính Huber ở `x > 8` (`16x - 64`), đạo hàm phạt ở vùng activation lớn (`~200`) yếu đi **23 lần** (`0,16` so với `3,68`), khiến `expanded_conv_project_bn` giữ nguyên range `233–252` và `re_lu` ở `170–184` (kèm việc phạt 40 lớp thay vì 28 lớp MobileNetV3 làm loãng phạt). Hệ quả là `hm8` mất `2,11–3,13` điểm và nhầm `book → box` tăng lại.
-   - **Quyết định xúc tiến Giai đoạn 5 (`#16 h1p_kd_240x320` & `#17 h1p_kd_full_240x320`):**
-     1. **Bổ sung Teacher Pretrained `MobileNetV3Large` (~3,3M params, 3-scale FPN stride 32→16→8, có Squeeze-and-Excitation + h-swish):** Chạy trên GPU FP32 để chưng cất trực tiếp heatmap (`KDHmLoss` Quality-Focal KL) và box (`KDBoxLoss` L1+GIoU tại mọi ô Teacher tự tin $\ge 0,25$) sang Student `197.139` params. Giải quyết tận gốc lỗi nhầm lớp `book ↔ box` và `mouse ↔ phone ↔ toy_car`.
-     2. **Khôi phục phạt bậc hai `x^2` cho toàn bộ dải vượt ngưỡng $\le 48$ trên đúng 28 lớp MobileNetV3** (giữ nguyên sức ép giảm range của `#12/#13` chỉ mất `1,01%` INT8, chỉ chặn tuyến tính khi $> 48$ ở vài epoch đầu) + **Warm-start Student từ `#12/#13`** để vào thẳng vùng mAP $> 0,94$ ngay từ epoch đầu.
-     3. **Thêm Straight-Through Estimator (STE) Fake-Quantization INT8 (256 mức) ngay trong `heatmap_focal_loss` và `KDHmLoss`:** Ép trọng số Student tạo ra đỉnh heatmap sắc nét ngay cả sau khi làm tròn 256 mức INT8 mà không thêm bất kỳ op nào vào file `.tflite`.
+   - **Giải pháp:** Cập nhật `export_int8.py` tự động thử 3 tập calibration `[(0, 200), (1, 200), (2, 500)]` và lưu bản `.tflite` có mAP INT8 cao nhất. Ở `#16`, cả 3 tập đều rất sát (`0,9449 / 0,9440 / 0,9449`), cho thấy STE + phạt bậc hai đã ổn định hóa phân bố activation.
+4. **Bài học từ #14 & #15 (`h1p_v3`) và kết quả xác nhận của Giai đoạn 5 (`#16 h1p_kd_240x320` & `#17 h1p_kd_full_240x320`):**
+   - **Điểm cộng của #14 & #15:** `close_mosaic = 15` và EMA 25% cuối giúp FP32 đạt `0,9592` ở #15, đồng thời xóa bỏ 40 epoch đầu bị dao động.
+   - **Vì sao INT8 của #14/#15 mất nhiều hơn (`2,49–3,53` điểm so với `1,01` điểm của #13)?** Khi đổi `ActRangePenalty` sang tuyến tính Huber ở `x > 8` và phạt 40 lớp, đạo hàm phạt ở activation lớn (`~200`) yếu đi 23 lần (`expanded_conv_project_bn` vọt lên `233–252`), khiến `hm8` mất `2,11–3,13` điểm.
+   - **Hiệu quả thực đo của Giai đoạn 5 (`#16` & `#17`):**
+     1. **Teacher `MobileNetV3Large` (3.098.699 params, 3-scale FPN + SE) đạt `0,9782` (EMA) trên val và `0,9845` trên full data**, chưng cất trực tiếp heatmap (`KDHmLoss`) + box (`KDBoxLoss`) giúp Student 197.139 params vượt trần FP32 của chính #15 (`0,9562` val ở `#16` và **`0,9641`** full ở `#17`).
+     2. **Phạt bậc hai `x^2` (chặn tuyến tính khi vượt > 48) trên 28 lớp MobileNetV3 + warm-start** kéo range lớn nhất từ `233–252` ở #14/#15 xuống còn **`124,3`** (`#16`) và **`114,9`** (`#17`).
+     3. **STE Fake-Quantization INT8 (256 mức) trong `heatmap_focal_loss` và `KDHmLoss`** kéo điểm đỉnh `hm8` trung bình (tại `hm32 > 0.3`) từ `0,792` lên **`0,861`** (`#16`) / **`0,845`** (`#17`), giảm hao hụt riêng của `hm8` (`hm8+box32`) từ `1,72–3,13` điểm xuống còn **`0,83–0,96` điểm**, và giảm số box rác xuống còn **`29,0–29,3` box/ảnh** (gọn nhất từ trước tới nay). Kết quả cuối: `#16` đạt **`0,9449` INT8** trên val độc lập và `#17` đạt **`0,9520` INT8** (mất chỉ `1,21` điểm).
+5. **Hiệu quả thực đo của Giai đoạn 6 (`#18 h1p_kd_v2_240x320` & `#19 h1p_kd_v2_full_240x320`) và bài học về `cross_nms_iou`:**
+   - **Huấn luyện GĐ6 thắng rất rõ trên trọng số:** Sửa `targets.py` (không cắt tâm 4 ô lân cận cho vật nhỏ `int(rad)==0`) + **DIoU + trọng số vật nhỏ + STE INT8 nhánh box** giúp recall vật nhỏ (`<28 px`) tăng từ `0,872–0,878` lên **`0,882`** (`#18`) / **`0,894`** (`#19`), sai số box lệch (`IoU → 0,1`) giảm từ `+2,08` xuống **`+1,65`** (`#19`), điểm đỉnh `hm8` tăng tiếp từ `0,845–0,861` lên **`0,914–0,922`**, và `mAP50 INT8` cùng cấu hình decode GĐ5 nhảy lên **`0,9511`** (`#18`, +0,62 so với `#16`) và **`0,9573`** (`#19`, +0,53 so với `#17`).
+   - **Phân tách `box_smooth` và `cross_nms_iou` (`decode_center`):**
+     - Riêng **`box_smooth=0,35`** **tăng điểm đều trên cả 4 model**: `#16` `0,9443 → 0,9459` (+0,16), `#17` `0,9520 → 0,9546` (+0,26), `#18` `0,9511 → 0,9523` (+0,12), `#19` `0,9573 → 0,9577` (+0,04).
+     - Ngược lại, **`cross_nms_iou=0,85` làm tụt `-0,52` đến `-0,70` điểm trên MỌI model** (`#17`: `0,9546 → 0,9490`, `#19`: `0,9577 → 0,9525`) do cắt mất ~30.000–40.000 box ứng viên lớp thứ cấp vốn cần thiết khi tính AP độc lập từng lớp (tăng tỷ lệ bỏ sót từ `0,2%` lên `0,7%`). Đây là lý do duy nhất khiến bản nộp `#19` đạt `95,48350` thay vì vượt `95,86229`. Đã tắt mặc định `cross_nms_iou=None`, giữ `box_smooth=0,35`.
 
 ## Phần intent (TextCNN) – 30% điểm
 
-Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắt [TĐ] ngày 2026-11-11:
-- `textcnn_dual`: 62.189 tham số, 81 KB INT8, CV INT8 1,0000, stress INT8 0,9274. **Đã chọn để nộp.**
-- Dự đoán nằm ở `MyDrive/EdgeAI/intent_submission.csv`. Mỗi thí nghiệm ở bảng trên có thêm `submission_with_intent.csv` (8000 dòng) trong thư mục Drive của nó.
-- Cột "Kaggle" ở bảng trên vẫn là "chưa nộp". Khi nộp, dùng `submission_with_intent.csv`, rồi ghi điểm vào cột đó.
+Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắt [TĐ] ngày 2026-11-13:
+- **`textcnn_dual_v3`** (`word_branch_dropout=0,10`, `word_dropout=0,12`): 82.933 tham số, 104 KB INT8, CV INT8 `1,0000`, stress INT8 **`0,9299`** (vượt `textcnn_dual` `0,9274`). **Đã tự động chọn làm mặc định** trong `MyDrive/EdgeAI/intent_submission.csv`.
+- Đã nộp thử `#9` (bản decode cũ) đạt **94,45** (`textcnn_dual`), `#17` (`h1p_kd_full_240x320`, decode GĐ5) đạt **95,86229** (`textcnn_dual`), và `#19` (bản lỗi `cross_nms_iou=0,85`) đạt **95,48350** (`textcnn_dual_v3`). Đã xuất lại các file submission đã tắt `cross_nms_iou` trong `submissions/` để nộp ngay `#19` (`0,9577` val INT8).
 
 ## Ghi chú môi trường Colab (đo 2026-11-10)
 
@@ -210,8 +221,10 @@ Bảng và phân tích riêng: [textcnn_intent.md](textcnn_intent.md). Tóm tắ
 3c. ~~#6 `h1p_pen_240x320` (INT8 0,9217) và #7 `h1p_pen_192x256_e120` (INT8 0,9184)~~. Cả hai đã xong và đều thắng #5.
 3d. ~~#8 `h1p_pen_240x320_e120` (INT8 0,9181) và #9 `h1p_pen_240x320_bw2` (INT8 0,9257)~~. Cả hai đã xong; #9 là tốt nhất hiện tại. Không train dài hơn 80 epoch nữa, vì INT8 mất nhiều hơn.
 3f. ~~#10 `h1p_pen_240x320_bw2_r2` (INT8 0,9025) và #11 `h1p_pen_240x320_bw3` (INT8 0,9200)~~. Đã xong: nhiễu INT8 giữa hai lần train khoảng 2 điểm.
-3g. ~~`int8_probe` cho 5 bản 240×320 (#9, #10, #6, #8, #11) và train #12 (`h1p_v2`), #13 (`h1p_v2_full`)~~. **Đã xong:** Decode mới tăng +0,29 đến +0,62 điểm INT8 trên mọi model; #12 đạt **0,9308 INT8** trên val (cao nhất từ trước tới nay); #13 đạt **0,9442 INT8** (mất đúng 1,01 điểm).
-3h. **Đang xếp hàng** (`configs/queue.json`): #14 (`h1p_v3_240x320`) và #15 (`h1p_v3_full_240x320`) — Giai đoạn 3B với Huber `ActRangePenalty` + phạt cả neck, `close_mosaic=15`, EMA 25% cuối, và tự động chọn tập calibration tốt nhất trong `export_int8.py`.
+3g. ~~`int8_probe` cho 5 bản 240×320 (#9, #10, #6, #8, #11) và train #12 (`h1p_v2`), #13 (`h1p_v2_full`)~~. **Đã xong:** Decode mới tăng +0,29 đến +0,62 điểm INT8 trên mọi model; #12 đạt **0,9308 INT8** trên val; #13 đạt **0,9442 INT8** (mất đúng 1,01 điểm).
+3h. ~~#14 (`h1p_v3_240x320`) và #15 (`h1p_v3_full_240x320`)~~. **Đã xong:** #15 đạt FP32 `0,9592` nhưng INT8 đạt `0,9342` do Huber phạt nhẹ vùng activation lớn.
+3i. ~~GĐ5 (`configs/queue.json`): #16 (`h1p_kd_240x320`) và #17 (`h1p_kd_full_240x320`)~~. **Đã xong:** #16 đạt **`0,9449` INT8** trên val độc lập; #17 đạt **`0,9641` FP32 / `0,9520` INT8** (cao nhất từ trước tới nay, đạt **95,86229** trên Kaggle).
+3j. **~~GĐ6 (`#18 h1p_kd_v2_240x320` & `#19 h1p_kd_v2_full_240x320`)~~:** **Đã xong trên Colab & sửa lỗi decode.** `#18` đạt **`0,9523` INT8** trên val độc lập (+0,74 so với `#16`); `#19` đạt **`0,9577` INT8** (+0,57 so với `#17` GĐ5). Lỗi `cross_nms_iou=0,85` làm `#19` tụt xuống `0,9525` (`95,48350` Kaggle) đã được tắt (`cross_nms_iou=None`) và xuất lại submission.
 4. Augmentation: tắt bớt hoặc tăng mạnh hơn; thêm làm mờ; ghép 4 ảnh (mosaic).
 5. Lịch learning rate và số epoch; `box_weight`.
 

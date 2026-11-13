@@ -99,32 +99,37 @@ class KDBoxLoss(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
         s_box = y_pred[..., :4]
+        s_box_q = 0.7 * s_box + 0.3 * _ste_fake_quant8(s_box)
         t_box = tf.stop_gradient(y_pred[..., 4:8])
         t_hm = tf.stop_gradient(y_pred[..., 8:])
         t_obj = tf.reduce_max(tf.sigmoid(t_hm), axis=-1, keepdims=True)
         mask = tf.where(t_obj >= self.thr, t_obj, tf.zeros_like(t_obj))
         pseudo_target = tf.concat([t_box, mask], axis=-1)
-        return box_l1_loss(pseudo_target, s_box, giou_weight=1.0)
+        return box_l1_loss(pseudo_target, s_box_q, giou_weight=1.0)
 
     def get_config(self):
         return {**super().get_config(), "thr": self.thr}
 
 
 def box_l1_loss(y_true, pred, giou_weight=1.0):
-    """Loss hộp giới hạn = L1([log(w/8), log(h/8), ox, oy]) + giou_weight * (1 - GIoU), có trọng số theo mask.
+    """Loss hộp giới hạn = L1([log(w/8), log(h/8), ox, oy]) + giou_weight * (1 - DIoU_G), có trọng số ưu tiên vật nhỏ + STE INT8.
 
-    Ở các ô có mask > 0 (tâm vật = 1.0, 4 ô sát tâm = 0.25):
+    Ở các ô có mask > 0 (tâm vật = 1.0, 4 ô sát tâm = neighbor_weight):
       - L1 kéo từng thành phần về đáp án ổn định lúc đầu.
-      - GIoU tối ưu trực tiếp độ trùng khít hình chữ nhật (thước đo IoU >= 0.5 của Kaggle).
+      - GIoU + DIoU (phạt khoảng cách tâm chuẩn hóa) tối ưu độ trùng khít & ưu tiên thêm cho vật nhỏ.
     """
     y_true = tf.cast(y_true, pred.dtype)
+    pred = 0.7 * pred + 0.3 * _ste_fake_quant8(pred)
     target, mask = y_true[..., :4], y_true[..., 4:5]
-    n = tf.maximum(tf.reduce_sum(mask), 1.0)
-    l1 = tf.reduce_sum(tf.abs(pred - target) * mask) / n
+
+    wt, ht = tf.exp(tf.clip_by_value(target[..., 0], -6.0, 6.0)), tf.exp(tf.clip_by_value(target[..., 1], -6.0, 6.0))
+    scale_w = 1.0 + 0.5 * tf.clip_by_value(3.5 / (tf.sqrt(wt * ht + 1e-4) + 1e-4), 0.0, 1.0)
+    w = mask * scale_w[..., None]
+    n = tf.maximum(tf.reduce_sum(w), 1.0)
+    l1 = tf.reduce_sum(tf.abs(pred - target) * w) / n
     if giou_weight <= 0:
         return l1
 
-    wt, ht = tf.exp(tf.clip_by_value(target[..., 0], -6.0, 6.0)), tf.exp(tf.clip_by_value(target[..., 1], -6.0, 6.0))
     wp, hp = tf.exp(tf.clip_by_value(pred[..., 0], -6.0, 6.0)), tf.exp(tf.clip_by_value(pred[..., 1], -6.0, 6.0))
     oxt, oyt, oxp, oyp = target[..., 2], target[..., 3], pred[..., 2], pred[..., 3]
 
@@ -141,5 +146,7 @@ def box_l1_loss(y_true, pred, giou_weight=1.0):
     encl_h = tf.maximum(0.0, tf.maximum(y2p, y2t) - tf.minimum(y1p, y1t))
     encl = encl_w * encl_h + 1e-7
     giou = iou - (encl - union) / encl
-    giou_loss = tf.reduce_sum((1.0 - giou)[..., None] * mask) / n
-    return l1 + giou_weight * giou_loss
+    c2 = tf.square(encl_w) + tf.square(encl_h) + 1e-7
+    diou_pen = (tf.square(oxp - oxt) + tf.square(oyp - oyt)) / c2
+    diou_loss = tf.reduce_sum((1.0 - giou + diou_pen)[..., None] * w) / n
+    return l1 + giou_weight * diou_loss

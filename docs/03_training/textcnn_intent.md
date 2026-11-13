@@ -1,14 +1,13 @@
-# TextCNN intent – trạng thái (cập nhật 2026-11-11)
+# TextCNN intent – trạng thái (cập nhật 2026-11-13)
 
 Phần intent chiếm **30%** điểm vòng loại: `S = 0,70·(mAP50·100) + 0,30·(Accuracy·100)`.
-Mọi số trong file này đều là **[TĐ]** (tự đo), chạy trên Colab T4 với TF 2.21 ngày 2026-11-11.
+Mọi số trong file này đều là **[TĐ]** (tự đo), chạy trên Colab T4 với TF 2.21 ngày 2026-11-11 – 2026-11-13.
 
-**Tóm tắt.** Model **`textcnn_dual`** đã được chọn để nộp: 62.189 tham số, file INT8 81 KB, đạt mọi kiểm tra luật.
-- Accuracy khi chia CV theo khuôn câu: INT8 **100%**.
-- Stress test: INT8 **92,7%**.
-- Dự đoán test đã nằm trong `MyDrive/EdgeAI/intent_submission.csv`.
-- Mỗi thí nghiệm detection có thêm file `submission_with_intent.csv` đã ghép sẵn.
-- **Chưa nộp Kaggle.**
+**Tóm tắt.** Model **`textcnn_dual_v3`** đã tự động được chọn để nộp (vượt `textcnn_dual`): 82.933 tham số, file INT8 104 KB, đạt mọi kiểm tra luật.
+- Accuracy khi chia CV theo khuôn câu: INT8 **100%** (1,0000 ở cả 5 fold).
+- Stress test (22 cụm, 4.034 câu): FP32 **0,9284** / INT8 **0,9299** (cao nhất từ trước tới nay, vượt `textcnn_dual` 0,9274 và `textcnn_dual_v2` 0,9117).
+- Dự đoán test khớp từng byte giữa `MyDrive/EdgeAI/intent_submission.csv` và `experiments_intent/textcnn_dual_v3/intent_submission.csv`.
+- Đã ghép nộp cùng detection #9 (đạt **94,45**) và #17 `h1p_kd_full_240x320` (đạt **95,86229** với `textcnn_dual`), và #19 `h1p_kd_v2_full_240x320` (**95,48350** khi còn lỗi `cross_nms_iou=0,85`, đã sửa decode).
 
 ---
 
@@ -63,30 +62,36 @@ câu hỏi -> norm() -> token -> id (độ dài cố định, đệm <pad>=0, t�
 - Cả hai thước đo đều được đo trên **FP32 (Keras)** và trên **INT8 (`.tflite`)**.
 - Điểm thật là cột INT8.
 
-## 4. Kết quả [TĐ] (Colab T4, 2026-11-11)
+## 4. Kết quả [TĐ] (Colab T4, 2026-11-11 – 2026-11-13)
 
 | Config | Nhánh | Tham số | File INT8 | CV FP32 | CV INT8 | Stress FP32 | Stress INT8 | Luật |
 |---|---|---|---|---|---|---|---|---|
-| **`textcnn_dual`** | word + char | **62.189** | **81 KB** | 1,0000 | 1,0000 | 0,9281 | **0,9274** | đạt |
+| **`textcnn_dual_v3`** | word + char (`word_branch_dropout=0,10`, `word_dropout=0,12`) | **82.933** | **104 KB** | 1,0000 | 1,0000 | 0,9284 | **0,9299** | đạt |
+| `textcnn_dual` | word + char | 62.189 | 81 KB | 1,0000 | 1,0000 | 0,9281 | 0,9274 | đạt |
 | `textcnn_word` | word | 80.581 | 94 KB | 1,0000 | 1,0000 | 0,9197 | 0,9212 | đạt |
+| `textcnn_dual_v2` | word + char (`word_branch_dropout=0,25`) | 82.933 | 104 KB | 1,0000 | 1,0000 | 0,9117 | 0,9117 | đạt |
 | `textcnn_char` | char | 77.605 | 94 KB | 0,9998 | 0,9998 | 0,8513 | 0,8508 | đạt |
 
-- **INT8 gần như không mất gì:** chênh lệch FP32/INT8 ≤ 0,5 điểm, có cụm INT8 còn cao hơn. Trên 4000 câu test, FP32 và INT8 cho cùng kết quả 100% (dual).
-- Ba model mạnh ở những chỗ khác nhau:
+- **INT8 gần như không mất gì:** chênh lệch FP32/INT8 ≤ 0,5 điểm, có cụm INT8 còn cao hơn. Trên 4000 câu test, FP32 và INT8 cho cùng kết quả 100% (`dual`, `dual_v2`, `dual_v3`).
+- Các model mạnh ở những chỗ khác nhau:
 
-| Cụm bị giấu | word | char | dual |
-|---|---|---|---|
-| `vi tri` (227 câu) | **0,29** | 0,96 | 0,79 |
-| `phia` (184) | 0,69 | 0,72 | 0,69 |
-| `ngang` (159) | 1,00 | **0,63** | 1,00 |
-| `dem` (679) | 0,88 | 0,77 | 0,87 |
-| `tat ca` (282) | 1,00 | 1,00 | **0,69** |
-| `kieu` / `nhom` (238/231) | 1,00 | **0,57 / 0,46** | 1,00 |
-| `dung de` (24) | 1,00 | 1,00 | **0,63** |
+| Cụm bị giấu | word | char | dual | dual_v2 | dual_v3 |
+|---|---|---|---|---|---|
+| `vi tri` (227 câu) | **0,29** | 0,96 | 0,79 | **0,90** | 0,88 |
+| `phia` (184) | 0,69 | 0,72 | 0,69 | 0,70 | 0,69 |
+| `ngang` (159) | 1,00 | **0,63** | 1,00 | 0,84 | **0,98** |
+| `dem` (679) | 0,88 | 0,77 | 0,87 | 0,77 | 0,82 |
+| `tat ca` (282) | 1,00 | 1,00 | **0,69** | **1,00** | **1,00** |
+| `kieu` / `nhom` (238/231) | 1,00 | **0,57 / 0,46** | 1,00 | 0,75 / 0,84 | 0,80 / 0,89 |
+| `dung de` (24) | 1,00 | 1,00 | **0,63** | **1,00** | **1,00** |
 
 (Số trong bảng là accuracy INT8.)
 
-- **Kiểm tra luật** (`report.json` → `checks`), cả 3 config đều đạt:
+- **Nhận xét `textcnn_dual_v2` (`word_branch_dropout=0,25`) & `textcnn_dual_v3` (`word_branch_dropout=0,10`, `word_dropout=0,12`):**
+  - `dual_v2` giải quyết được hiện tượng nhánh `word` lấn át ở `tat ca` (`0,69 → 1,00`), `dung de` (`0,63 → 1,00`) và `vi tri` (`0,79 → 0,90`), nhưng kéo các cụm do `word` gánh xuống nên stress gộp chỉ đạt `0,9117`.
+  - **`textcnn_dual_v3` đạt điểm cân bằng tối ưu:** vẫn giữ tuyệt đối **`1,0000`** ở `tat ca` và `dung de`, giữ `vi tri` ở **`0,8811`** (tăng +0,09 so với `dual`) và kéo lại `ngang` lên **`0,9811`** (`dual_v2`: `0,84`), `nhom` **`0,8918`**, đưa stress test gộp INT8 lên kỷ lục **`0,9299`**. Trên 4.000 câu test: phân bố đều `800` câu/lớp, khớp 100% FP32/INT8, và đoán `53 LOCATION / 46 EXIST` trên 99 câu chứa từ lạ (`lech`, `kiem`).
+
+- **Kiểm tra luật** (`report.json` → `checks`), cả 5 config đều đạt:
   - ≤ 200K tham số;
   - file ≤ 1,5 MB;
   - INT8 hoàn toàn (không còn tensor float32);
@@ -139,10 +144,11 @@ ESP32 phải làm **y hệt** lúc train, nếu không model nhận đầu vào 
 
 | Việc | Ưu tiên | Ghi chú |
 |---|---|---|
-| Nộp Kaggle `submission_with_intent.csv` của detection tốt nhất | **cao** | Hiện là #9 `h1p_pen_240x320_bw2` (mAP50 INT8 0,9257). Ước tính S ≈ 0,7 × 92,6 + 0,3 × ~100 ≈ 94,8 nếu accuracy intent khoảng 99–100% |
+| Nộp Kaggle `submission_with_intent.csv` của detection tốt nhất | **đã nộp** | Bản #9 đạt **94,45**; bản #17 `h1p_kd_full_240x320` (mAP50 INT8 0,9520) đạt **95,86229** (`textcnn_dual`); bản #19 (còn lỗi `cross_nms_iou=0,85`) đạt **95,48350** (`textcnn_dual_v3`). Cần nộp lại bản #19 đã sửa decode (`0,9577` val INT8) + `textcnn_dual_v3` |
 | Chạy `model_int8.tflite` trên kit (esp-tflite-micro 1.4.2) | trung bình | 6 op đều là op cơ bản của TFLM nhưng **chưa chạy thử trên kit**; file được convert bằng TF 2.21 |
 | Viết tokenizer C cho firmware theo mục 6 | trước chung kết | Đối chiếu id với Python trên vài chục câu |
-| Tăng độ bền với cách hỏi mới (`textcnn_dual_v2`) | **đã triển khai code** | Các cụm dual còn yếu: `tat ca` 0,69, `dung de` 0,63, `phia` 0,69, `vi tri` 0,79. Đã thêm `word_branch_dropout: 0.25` + `word_dropout: 0.15` và tạo `configs/textcnn_dual_v2.json` trong `textcnn_queue.json` |
+| Tăng độ bền với cách hỏi mới (`textcnn_dual_v2`) | **đã xong** | Thực đo: `tat ca` `0,69→1,00`, `dung de` `0,63→1,00`, `vi tri` `0,79→0,90`; nhưng `dem/kieu/nhom/ngang` giảm nên stress gộp đạt `0,9117` |
+| Thử điểm cân bằng giữa `dual` và `dual_v2` (`textcnn_dual_v3`) | **đã xong** | Thực đo: Stress INT8 đạt kỷ lục **`0,9299`** (`tat ca` `1,00`, `dung de` `1,00`, `ngang` `0,9811`, `vi tri` `0,8811`); đã tự động chọn làm model nộp mặc định |
 | Hỏi BTC: test intent có cân bằng 5 lớp không | thấp | Nếu có, phân bố 800/lớp của dual là bằng chứng mạnh hơn |
 
 ## 8. File liên quan

@@ -14,16 +14,42 @@ def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
 
+def _decode_coords(box, ys, xs, sy, sx, orig_hw):
+    lw, lh, ox, oy = box[ys, xs].T
+    cx, cy = (xs + ox) * STRIDE, (ys + oy) * STRIDE
+    w, h = np.exp(np.clip(lw, -8.0, 8.0)) * STRIDE, np.exp(np.clip(lh, -8.0, 8.0)) * STRIDE
+    return np.stack([
+        np.clip((cx - w * 0.5) * sx, 0.0, orig_hw[1]),
+        np.clip((cy - h * 0.5) * sy, 0.0, orig_hw[0]),
+        np.clip((cx + w * 0.5) * sx, 0.0, orig_hw[1]),
+        np.clip((cy + h * 0.5) * sy, 0.0, orig_hw[0]),
+    ], axis=1)
+
+
+def _pair_iou(b1, b2):
+    xx1 = np.maximum(b1[:, 0], b2[:, 0]); yy1 = np.maximum(b1[:, 1], b2[:, 1])
+    xx2 = np.minimum(b1[:, 2], b2[:, 2]); yy2 = np.minimum(b1[:, 3], b2[:, 3])
+    inter = np.clip(xx2 - xx1, 0.0, None) * np.clip(yy2 - yy1, 0.0, None)
+    a1 = (b1[:, 2] - b1[:, 0]) * (b1[:, 3] - b1[:, 1])
+    a2 = (b2[:, 2] - b2[:, 0]) * (b2[:, 3] - b2[:, 1])
+    return inter / (a1 + a2 - inter + 1e-9)
+
+
 def decode_center(hm, box, input_hw, orig_hw=(240, 320), score_thr=0.05, topk=100,
-                  tie_break=True, nms_iou=0.65, score_smooth=0.1):
+                  tie_break=True, nms_iou=0.65, score_smooth=0.1,
+                  box_smooth=0.35, cross_nms_iou=None):
     """hm, box: float (đã dequantize), không có batch. Trả list dict {class_id, score, bbox[x1,y1,x2,y2]} trên ảnh gốc.
 
     Các cải tiến cho INT8 (mặc định bật):
-      tie_break    : khi lượng tử hóa INT8 làm 2 ô cạnh nhau có cùng giá trị đỉnh (p == nb), chỉ giữ đúng 1 ô có
-                     trung bình lân cận 3x3 lớn nhất (tâm đồi Gauss thật, nơi box được giám sát khi train).
-      score_smooth : trộn nhẹ (1 - α)*p + α*mean_3x3 để phá vỡ hiện tượng hàng nghìn box có cùng mức INT8 (1/256)
-                     khi xếp hạng tính AP toàn cục.
-      nms_iou      : lọc trùng theo từng lớp (None = tắt) khi vật lớn sinh ra 2 đỉnh cách nhau >= 2 ô lưới.
+      tie_break     : khi lượng tử hóa INT8 làm 2 ô cạnh nhau có cùng giá trị đỉnh (p == nb), chỉ giữ đúng 1 ô có
+                      trung bình lân cận 3x3 lớn nhất (tâm đồi Gauss thật, nơi box được giám sát khi train).
+      score_smooth  : trộn nhẹ (1 - α)*p + α*mean_3x3 để phá vỡ hiện tượng hàng nghìn box có cùng mức INT8 (1/256)
+                      khi xếp hạng tính AP toàn cục.
+      nms_iou       : lọc trùng theo từng lớp (None = tắt) khi vật lớn sinh ra 2 đỉnh cách nhau >= 2 ô lưới.
+      box_smooth    : trộn thêm dự đoán box của 4 ô sát tâm (đã được dạy qua neighbor_weight/KDBoxLoss) để giảm nhiễu
+                      lượng tử hóa INT8 và tinh chỉnh vị trí sub-pixel (0 = tắt).
+      cross_nms_iou : giảm điểm box khác lớp trùng khít (IoU >= ngưỡng) với 1 đỉnh mạnh hơn (mặc định None = tắt
+                      vì đánh giá AP độc lập từng lớp cần giữ lại ứng viên lớp thứ cấp).
     """
     p = _sigmoid(hm)
     hf, wf, c = p.shape
@@ -48,14 +74,27 @@ def decode_center(hm, box, input_hw, orig_hw=(240, 320), score_thr=0.05, topk=10
     scores = (1.0 - score_smooth) * raw_s + score_smooth * mean_3x3[ys, xs, cs] if score_smooth else raw_s
     sy, sx = orig_hw[0] / input_hw[0], orig_hw[1] / input_hw[1]
 
-    lw, lh, ox, oy = box[ys, xs].T
-    cx, cy = (xs + ox) * STRIDE, (ys + oy) * STRIDE
-    w, h = np.exp(np.clip(lw, -8.0, 8.0)) * STRIDE, np.exp(np.clip(lh, -8.0, 8.0)) * STRIDE
-    x1 = np.clip((cx - w / 2) * sx, 0.0, orig_hw[1])
-    x2 = np.clip((cx + w / 2) * sx, 0.0, orig_hw[1])
-    y1 = np.clip((cy - h / 2) * sy, 0.0, orig_hw[0])
-    y2 = np.clip((cy + h / 2) * sy, 0.0, orig_hw[0])
-    boxes = np.stack([x1, y1, x2, y2], axis=1)
+    boxes = _decode_coords(box, ys, xs, sy, sx, orig_hw)
+    if box_smooth and box_smooth > 0:
+        b_sum = boxes.copy()
+        w_sum = np.ones((len(ys), 1), dtype=np.float32)
+        p_peak = raw_s
+        thr_nb = np.maximum(score_thr, 0.20 * p_peak)
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            ny, nx = ys + dy, xs + dx
+            inb = (ny >= 0) & (ny < hf) & (nx >= 0) & (nx < wf)
+            ny_c, nx_c = np.clip(ny, 0, hf - 1), np.clip(nx, 0, wf - 1)
+            p_nb = p[ny_c, nx_c, cs]
+            valid = inb & (p_nb >= thr_nb)
+            if np.any(valid):
+                nb_boxes = _decode_coords(box, ny_c[valid], nx_c[valid], sy, sx, orig_hw)
+                same_obj = _pair_iou(nb_boxes, boxes[valid]) >= 0.30
+                if np.any(same_obj):
+                    v_idx = np.nonzero(valid)[0][same_obj]
+                    w_nb = (box_smooth * (p_nb[v_idx] / (p_peak[v_idx] + 1e-7)))[:, None]
+                    b_sum[v_idx] += w_nb * nb_boxes[same_obj]
+                    w_sum[v_idx] += w_nb
+        boxes = b_sum / w_sum
 
     if nms_iou is not None:
         keep = []
@@ -65,6 +104,24 @@ def decode_center(hm, box, input_hw, orig_hw=(240, 320), score_thr=0.05, topk=10
                 keep.append(idx[j])
         keep = np.asarray(keep, dtype=np.int64)
         ys, xs, cs, scores, boxes = ys[keep], xs[keep], cs[keep], scores[keep], boxes[keep]
+
+    if cross_nms_iou is not None and len(scores) > 1:
+        ord_idx = np.argsort(-scores)
+        boxes, scores, cs = boxes[ord_idx], scores[ord_idx], cs[ord_idx]
+        areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+        for i in range(len(scores)):
+            if scores[i] < 0.30:
+                break
+            for j in range(i + 1, len(scores)):
+                if cs[j] == cs[i] or scores[j] >= 0.75 * scores[i]:
+                    continue
+                xx1 = max(boxes[i, 0], boxes[j, 0]); yy1 = max(boxes[i, 1], boxes[j, 1])
+                xx2 = min(boxes[i, 2], boxes[j, 2]); yy2 = min(boxes[i, 3], boxes[j, 3])
+                inter = max(0.0, xx2 - xx1) * max(0.0, yy2 - yy1)
+                if inter / (areas[i] + areas[j] - inter + 1e-9) >= cross_nms_iou:
+                    scores[j] *= 0.25
+        keep_thr = scores >= score_thr
+        boxes, scores, cs = boxes[keep_thr], scores[keep_thr], cs[keep_thr]
 
     order = np.argsort(-scores)[:topk]
     return [{"class_id": int(cs[i]), "score": round(float(scores[i]), 5),

@@ -176,7 +176,7 @@ class ValMap(tf.keras.callbacks.Callback):
                 live = self.detector.get_weights()
                 self.detector.set_weights(self.ema_weights)
                 m_ema, per_ema, _ = evaluate(keras_predict_fn(self.detector), self.items, self.hw)
-                if m_ema >= m:
+                if (m_ema >= m - 0.0020) if self.full_train else (m_ema >= m):
                     m, per, used_ema = m_ema, per_ema, True
                 if not (last_epoch and used_ema):
                     self.detector.set_weights(live)
