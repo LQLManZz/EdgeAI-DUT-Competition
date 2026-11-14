@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "colab"
-CODE = ["src", "configs", "tests", "scripts/sanity_overfit.py", "scripts/colab_run.py"]
+CODE = ["src", "configs", "tests", "scripts/sanity_overfit.py", "scripts/colab_run.py", "scripts/model_soup.py"]
 
 
 def add(z, path, skip=None):
