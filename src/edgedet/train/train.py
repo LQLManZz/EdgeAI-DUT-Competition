@@ -24,6 +24,7 @@ import numpy as np
 import tensorflow as tf
 
 from edgedet.data.dataset import CLASS_NAMES, load_items, make_dataset, split_train_val
+from edgedet.data.kfold import multilabel_kfold_split
 from edgedet.eval.evaluate import evaluate, keras_predict_fn
 from edgedet.losses.center_loss import ActRangePenalty, KDBoxLoss, KDHmLoss, box_l1_loss, heatmap_focal_loss
 from edgedet.models.edgedet import build_edgedet
@@ -67,7 +68,18 @@ def penalty_layers(model):
 
 
 def load_config(path, **override):
-    cfg = {**DEFAULTS, **json.loads(Path(path).read_text(encoding="utf-8"))}
+    p = Path(path)
+    if not p.exists():
+        candidates = [
+            Path(__file__).resolve().parents[2] / path,
+            Path(__file__).resolve().parents[2] / "configs" / Path(path).name,
+            Path("configs") / Path(path).name,
+        ]
+        for c in candidates:
+            if c.exists():
+                p = c
+                break
+    cfg = {**DEFAULTS, **json.loads(p.read_text(encoding="utf-8"))}
     cfg.update({k: v for k, v in override.items() if v is not None})
     cfg["input_hw"] = tuple(cfg["input_hw"])
     return cfg
@@ -290,16 +302,26 @@ def main(argv=None):
     ap.add_argument("--data", default="data/raw")
     ap.add_argument("--out", required=True)
     ap.add_argument("--epochs", type=int)
+    ap.add_argument("--batch", type=int, help="ghi đè batch size (vd. 16, 32)")
     ap.add_argument("--limit", type=int, help="chỉ dùng N ảnh train (chạy thử)")
+    ap.add_argument("--fold", type=int, default=None, help="chỉ số fold khi train K-Fold (vd. 0, 1, 2)")
+    ap.add_argument("--n_splits", type=int, default=3, help="tổng số fold (mặc định 3)")
     a = ap.parse_args(argv)
 
     cfg = load_config(a.config, epochs=a.epochs)
+    if a.batch:
+        cfg["batch"] = a.batch
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps({**cfg, "input_hw": list(cfg["input_hw"])}, indent=2), encoding="utf-8")
     print("GPU:", tf.config.list_physical_devices("GPU") or "KHÔNG CÓ (train trên CPU sẽ rất chậm)")
 
     all_items = load_items(a.data, "train")
-    train_items, val_items = split_train_val(all_items, cfg["val_frac"], cfg["seed"])
+    if a.fold is not None:
+        folds = multilabel_kfold_split(all_items, n_splits=a.n_splits, seed=cfg.get("seed", 2026))
+        train_items, val_items = folds[a.fold]
+        print(f"K-Fold Stratified: Chạy Fold {a.fold + 1}/{a.n_splits}")
+    else:
+        train_items, val_items = split_train_val(all_items, cfg["val_frac"], cfg["seed"])
     if cfg.get("full_train"):
         train_items = all_items
     if a.limit:
