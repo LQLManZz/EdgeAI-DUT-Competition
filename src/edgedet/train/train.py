@@ -316,6 +316,9 @@ def main(argv=None):
     print("GPU:", tf.config.list_physical_devices("GPU") or "KHÔNG CÓ (train trên CPU sẽ rất chậm)")
 
     all_items = load_items(a.data, "train")
+    if not all_items:
+        import sys
+        sys.exit(f"!! LỖI: Thư mục dữ liệu '{a.data}/train/images' không có ảnh nào! Vui lòng chạy lại Ô 2 để nạp dữ liệu.")
     if a.fold is not None:
         folds = multilabel_kfold_split(all_items, n_splits=a.n_splits, seed=cfg.get("seed", 2026))
         train_items, val_items = folds[a.fold]
