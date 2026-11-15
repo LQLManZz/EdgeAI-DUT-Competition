@@ -60,7 +60,7 @@ def main():
                         help="Đường dẫn file yaml cho dataset")
     parser.add_argument("--epochs", type=int, default=50, help="Số epochs huấn luyện")
     parser.add_argument("--batch", type=int, default=16, help="Batch size (16 hoặc 32 phù hợp 4GB VRAM)")
-    parser.add_argument("--imgsz", type=int, nargs="+", default=[240, 320], help="Kích thước ảnh [H, W]")
+    parser.add_argument("--imgsz", type=int, nargs="+", default=[256, 320], help="Kích thước ảnh [H, W] (bội số 32)")
     parser.add_argument("--project", type=str, default="experiments_yolo", help="Thư mục lưu kết quả")
     parser.add_argument("--name", type=str, default="micro_yolo_run", help="Tên lần chạy")
     parser.add_argument("--device", type=str, default=None, help="0 cho CUDA GPU, hoặc cpu")

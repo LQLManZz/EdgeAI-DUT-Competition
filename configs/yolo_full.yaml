@@ -1,0 +1,11 @@
+names:
+  0: bottle
+  1: cup
+  2: phone
+  3: book
+  4: mouse
+  5: box
+  6: toy_car
+nc: 7
+train: D:/edgeAI_phan_biet_mot_so_thu_tu_camera_65k/train_full.txt
+val: D:/edgeAI_phan_biet_mot_so_thu_tu_camera_65k/val.txt
