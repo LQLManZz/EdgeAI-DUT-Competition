@@ -126,6 +126,8 @@ def main():
     ap.add_argument("--summary", action="store_true", help="chỉ in bảng kết quả")
     ap.add_argument("--smoke", action="store_true", help="chạy thử trên máy: 2 epoch, 128 ảnh")
     a = ap.parse_args()
+    if a.drive == "$DRIVE" or not a.drive:
+        a.drive = "/content/drive/MyDrive/EdgeAI"
     if not a.summary:
         queue = json.loads((ROOT / "configs" / "queue.json").read_text(encoding="utf-8"))["queue"]
         print("Hàng đợi:", queue)

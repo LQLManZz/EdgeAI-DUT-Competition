@@ -210,9 +210,11 @@ def make_dataset(items, input_hw, batch, training, aug=None, num_classes=7, cach
 
     cache=True giữ ảnh đã giải nén (uint8) trong RAM: 6000 ảnh ~ 1,4 GB, đọc lại từ đĩa mỗi epoch thì rất chậm.
     """
+    if not items:
+        raise ValueError("Danh sách items rỗng! Không có ảnh nào để tạo dataset.")
     aug = {**DEFAULT_AUG, **(aug or {})}
     b, c = _pad(items)
-    ds = tf.data.Dataset.from_tensor_slices(([it["path"] for it in items], b, c))
+    ds = tf.data.Dataset.from_tensor_slices((tf.constant([it["path"] for it in items], dtype=tf.string), b, c))
     ds = ds.map(lambda p, b, c: (read_image(p), b, c), num_parallel_calls=tf.data.AUTOTUNE)
     if cache:
         ds = ds.cache()
